@@ -8,11 +8,13 @@ import numpy as np
 
 
 @dataclasses.dataclass
-class Action:
+class MPIAction:
     """
     Holds the values which are applied to the magnetic Field for Gaurav`s microbots.
     """
 
     id = 0
-    magnitude: float
-    phase: float 
+    amplitudes: np.ndarray
+    frequencies: np.ndarray
+    phases: np.ndarray
+    offsets: np.ndarray

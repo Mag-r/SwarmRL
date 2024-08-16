@@ -10,8 +10,9 @@ import pint
 import scipy.integrate
 
 from .engine import Engine
-
-
+from swarmrl.actions import MPIAction
+from swarmrl.components.colloid import Colloid
+from swarmrl.force_functions.global_force_fn import GlobalForceFunction 
 @dataclasses.dataclass
 class GauravSimParams:
     """
@@ -64,7 +65,7 @@ def setup_unit_system(ureg: pint.UnitRegistry):
     return ureg
 
 
-def convert_params_to_simunits(params: GauravSimParams):
+def convert_params_to_simunits(params: GauravSimParams) -> GauravSimParams:
     ureg = params.ureg
     params_simunits = GauravSimParams(
         ureg=ureg,
@@ -93,28 +94,22 @@ class Raft:
         return np.array([np.cos(self.alpha), np.sin(self.alpha)])
 
 
-@dataclasses.dataclass
-class GauravAction:
-    amplitudes: np.array
-    frequencies: np.array
-    phases: np.array
-    offsets: np.array
 
 
-class Model:
-    def calc_action(self, rafts: typing.List[Raft]) -> GauravAction:
-        raise NotImplementedError
+# class Model:
+#     def calc_action(self, rafts: typing.List[Raft]) -> MPIAction:
+#         raise NotImplementedError
 
 
-class ConstantAction(Model):
-    def __init__(self, action: GauravAction) -> None:
-        self.action = action
+# class ConstantAction(Model):
+#     def __init__(self, action: MPIAction) -> None:
+#         self.action = action
 
-    def calc_action(self, rafts: typing.List[Raft]) -> GauravAction:
-        return self.action
+#     def calc_action(self, rafts: typing.List[Raft]) -> MPIAction:
+#         return self.action
 
 
-def calc_B_field(action: GauravAction, t: float):
+def calc_B_field(action: MPIAction, t: float):
     angles = 2 * np.pi * action.frequencies * t + action.phases
     return action.amplitudes * np.sin(angles) + action.offsets
 
@@ -214,10 +209,11 @@ class GauravSim(Engine):
         out_folder: typing.Union[str, pathlib.Path],
         h5_group_tag: str = "rafts",
         with_precalc_capillary: bool = True,
+        save_h5: bool = True,
     ):
         setup_unit_system(params.ureg)
         self.params: GauravSimParams = convert_params_to_simunits(params)
-        self.rafts: typing.List[Raft] = []
+        self.colloids: typing.List[Colloid] = []
 
         self.out_folder: pathlib.Path = pathlib.Path(out_folder).resolve()
         self.h5_group_tag = h5_group_tag
@@ -225,29 +221,30 @@ class GauravSim(Engine):
 
         self.integration_initialised = False
         self.slice_idx = None
-        self.current_action: GauravAction = None
+        self.current_action: MPIAction = None
 
         if self.with_precalc_capillary:
             cap_force, cap_torque, cap_distances = self._load_cap_forces()
             self.capillary_force = cap_force
             self.capillary_torque = cap_torque
             self.max_cap_distance = cap_distances[-1]
-
-    def add_raft(self, pos: np.array, alpha: float, magnetic_moment: float):
+        self.save_h5 = save_h5
+        
+    def add_colloids(self, pos: np.array, alpha: float, magnetic_moment: float):
         self._check_already_initialised()
-        self.rafts.append(
+        self.colloids.append(
             Raft(
-                pos.m_as("sim_length"),
-                alpha,
-                magnetic_moment.m_as("sim_magnetic_moment"),
+                pos=pos.m_as("sim_length"),
+                alpha=alpha,
+                magnetic_moment=magnetic_moment.m_as("sim_magnetic_moment"),
             )
         )
 
     def _get_state_from_rafts(self):
-        return np.array([[r.pos[0], r.pos[1], r.alpha] for r in self.rafts])
+        return np.array([[r.pos[0], r.pos[1], r.alpha] for r in self.colloids])
 
     def _update_rafts_from_state(self, state):
-        for r, s in zip(self.rafts, state):
+        for r, s in zip(self.colloids, state):
             r.pos = s[:2]
             r.alpha = s[2]
 
@@ -268,7 +265,7 @@ class GauravSim(Engine):
         self.h5_filename = self.out_folder / "trajectory.hdf5"
         self.out_folder.mkdir(parents=True, exist_ok=True)
 
-        n_rafts = len(self.rafts)
+        n_rafts = len(self.colloids)
 
         self.h5_dataset_keys = ["Times", "Ids", "Alphas", "Unwrapped_Positions"]
 
@@ -480,14 +477,14 @@ class GauravSim(Engine):
     def _get_omega(self, state, b_field):
         b_field_angle = np.arctan2(b_field[1], b_field[0])
         b_field_norm = np.linalg.norm(b_field)
-        mag_moments = np.array([r.magnetic_moment for r in self.rafts])
+        mag_moments = np.array([r.magnetic_moment for r in self.colloids])
         b_field_torque = (
             mag_moments * b_field_norm * np.sin(b_field_angle - state[:, 2])
         )
 
         n_rafts = len(state)
         omegas = np.zeros(n_rafts)
-        mag_moments = [r.magnetic_moment for r in self.rafts]
+        mag_moments = [r.magnetic_moment for r in self.colloids]
         for i in range(n_rafts):
             r_ijs = state[:, :2] - state[i, :2][None, :]
             r_ij_norms = np.linalg.norm(r_ijs, axis=1)
@@ -500,6 +497,8 @@ class GauravSim(Engine):
                 phi_i = state[i, 2] - r_ij_angle
                 phi_j = state[j, 2] - r_ij_angle
                 # eq. 31
+                if r_ij_norm < 2 * self.params.raft_radius:
+                    raise ValueError("Rafts are overlapping")
                 torque_dipole_dipole = (
                     self.params.magnetic_constant
                     * mag_moments[i]
@@ -531,7 +530,7 @@ class GauravSim(Engine):
     def _get_vel(self, state, omegas, b_field):
         n_rafts = len(state)
         vels = np.zeros((n_rafts, 2))
-        mag_moments = [r.magnetic_moment for r in self.rafts]
+        mag_moments = [r.magnetic_moment for r in self.colloids]
 
         # single particle forces (wall repulsion)
         for i in range(n_rafts):
@@ -652,12 +651,13 @@ class GauravSim(Engine):
         state_derivative = np.concatenate([vel, omega[:, None]], axis=1)
         return state_derivative.reshape(-1)
 
-    def integrate(self, n_slices: int, model: Model):
+    def integrate(self, n_slices: int, model: GlobalForceFunction):
 
         if not self.integration_initialised:
-            self.time = 0.0
+            self.time = 0.0 
             self.slice_idx = 0
-            self._init_h5_output()
+            if self.save_h5:
+                self._init_h5_output()
             self.integration_initialised = True
 
         def rhs(t, state):
@@ -666,7 +666,7 @@ class GauravSim(Engine):
             return self.get_rhs(t, state)
 
         state_flat = self._get_state_from_rafts().flatten()
-
+        
         n_snapshots_per_slice = int(
             round(self.params.time_slice / self.params.snapshot_interval)
         )
@@ -674,12 +674,12 @@ class GauravSim(Engine):
             # Check for a model termination condition.
             # if model.kill_switch:
             #     break
-            self.current_action = model.calc_action(self.rafts)
+            self.current_action = model.calc_action(self.colloids)[0]
             sol = scipy.integrate.solve_ivp(
                 rhs,
                 (self.time, self.time + self.params.time_slice),
                 state_flat,
-                method="RK23",
+                method="LSODA",
                 first_step=self.params.time_step,
                 max_step=self.params.time_step,
                 min_step=self.params.time_step,
@@ -693,7 +693,8 @@ class GauravSim(Engine):
                 raise RuntimeError(
                     f"Integration crashed at time {self.time}. Reason: {sol.message}"
                 )
-            self.write_to_h5(sol.y, sol.t)
+            if self.save_h5:
+                self.write_to_h5(sol.y, sol.t)
 
             self.time = sol.t[-1]
             state_flat = sol.y[:, -1]

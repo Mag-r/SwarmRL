@@ -19,6 +19,7 @@ class Colloid:
     director: np.ndarray
     id: int
     velocity: np.ndarray = None
+    magnetic_moment: float = 0.0
     type: int = 0
 
     def __repr__(self):

@@ -6,6 +6,7 @@ from swarmrl.agents import bechinger_models, dummy_models, find_point
 from swarmrl.agents.actor_critic import ActorCriticAgent
 from swarmrl.agents.agent import Agent
 from swarmrl.agents.classical_agent import ClassicalAgent
+from swarmrl.agents.global_actor_critic import GlobalActorCriticAgent
 
 __all__ = [
     ActorCriticAgent.__name__,
@@ -14,4 +15,5 @@ __all__ = [
     bechinger_models.__name__,
     find_point.__name__,
     dummy_models.__name__,
+    GlobalActorCriticAgent.__name__,
 ]

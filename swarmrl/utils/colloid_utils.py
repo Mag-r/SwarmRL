@@ -17,11 +17,22 @@ class TrajectoryInformation:
     """
     Helper dataclass for training RL models.
     """
-
     particle_type: int
     features: list = field(default_factory=list)
     actions: list = field(default_factory=list)
     log_probs: list = field(default_factory=list)
+    rewards: list = field(default_factory=list)
+    killed: bool = False
+
+@dataclass
+class GlobalTrajectoryInformation:
+    """
+    Helper dataclass for training RL models, with a global agent.
+    """
+
+    features: list = field(default_factory=list)
+    actions: list = field(default_factory=list)
+    log_probs: list = field(default_factory=list) # probably not available
     rewards: list = field(default_factory=list)
     killed: bool = False
 
