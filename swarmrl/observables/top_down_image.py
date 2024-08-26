@@ -96,6 +96,8 @@ class TopDownImage(Observable, ABC):
                 particle = copy.deepcopy(self.custom_mesh)
             else:
                 particle = o3d.geometry.TriangleMesh.create_sphere(radius=1000)  # Adjust radius if needed
+            if np.shape(colloid.pos)[0] == 2:
+                colloid.pos = np.append(colloid.pos, 0)
             particle.translate(colloid.pos)
             if self.is_2D:
                 rot_matrix = particle.get_rotation_matrix_from_xyz([0, 0, colloid.alpha])
@@ -126,7 +128,7 @@ class TopDownImage(Observable, ABC):
         self.renderer.scene.clear_geometry()
         self.logger.info("Top-down image computed")
         image=self.rgb2gray(np.asarray(image))
-        plt.imshow(image)
-        plt.savefig('top_down_image.png',cmap='gray')
+        plt.imshow(image,cmap='gray')
+        plt.savefig('top_down_image.png')
         return np.asarray(image.reshape(1,self.image_resolution[0],self.image_resolution[1]))
 

@@ -96,17 +96,17 @@ class Raft:
 
 
 
-# class Model:
-#     def calc_action(self, rafts: typing.List[Raft]) -> MPIAction:
-#         raise NotImplementedError
+class Model:
+    def calc_action(self, rafts: typing.List[Raft]) -> MPIAction:
+        raise NotImplementedError
 
 
-# class ConstantAction(Model):
-#     def __init__(self, action: MPIAction) -> None:
-#         self.action = action
+class ConstantAction(Model):
+    def __init__(self, action: MPIAction) -> None:
+        self.action = action
 
-#     def calc_action(self, rafts: typing.List[Raft]) -> MPIAction:
-#         return self.action
+    def calc_action(self, rafts: typing.List[Raft]) -> MPIAction:
+        return self.action
 
 
 def calc_B_field(action: MPIAction, t: float):
@@ -487,6 +487,7 @@ class GauravSim(Engine):
         mag_moments = [r.magnetic_moment for r in self.colloids]
         for i in range(n_rafts):
             r_ijs = state[:, :2] - state[i, :2][None, :]
+
             r_ij_norms = np.linalg.norm(r_ijs, axis=1)
             r_ij_norms[i] = np.inf
             edge_edge_dists = r_ij_norms - 2 * self.params.raft_radius
@@ -498,6 +499,7 @@ class GauravSim(Engine):
                 phi_j = state[j, 2] - r_ij_angle
                 # eq. 31
                 if r_ij_norm < 2 * self.params.raft_radius:
+                    # print(r_ij_norms)
                     raise ValueError("Rafts are overlapping")
                 torque_dipole_dipole = (
                     self.params.magnetic_constant
@@ -670,16 +672,18 @@ class GauravSim(Engine):
         n_snapshots_per_slice = int(
             round(self.params.time_slice / self.params.snapshot_interval)
         )
-        for _ in range(n_slices):
+        for i in range(n_slices):
             # Check for a model termination condition.
             # if model.kill_switch:
             #     break
-            self.current_action = model.calc_action(self.colloids)[0]
+            if not isinstance(model, GlobalForceFunction):
+                raise ValueError("Model must be of type GlobalForceFunction")
+            self.current_action = model.calc_action(self.colloids)[0] 
             sol = scipy.integrate.solve_ivp(
                 rhs,
                 (self.time, self.time + self.params.time_slice),
                 state_flat,
-                method="LSODA",
+                method="RK23",
                 first_step=self.params.time_step,
                 max_step=self.params.time_step,
                 min_step=self.params.time_step,

@@ -106,8 +106,8 @@ class ContinuousFlaxModel(Network, ABC):
                 If you have multiple optimizers, this will create a custom train state.
         """
         params = self.model.init(init_rng, np.ones(list(self.input_shape)))["params"]
-        model_summary = self.model.tabulate(jax.random.PRNGKey(1), np.ones(list(self.input_shape)))
-        print(model_summary)
+        # model_summary = self.model.tabulate(jax.random.PRNGKey(1), np.ones(list(self.input_shape)))
+        # print(model_summary)
         if isinstance(self.optimizer, dict):
             CustomTrainState = self._create_custom_train_state(self.optimizer)
 

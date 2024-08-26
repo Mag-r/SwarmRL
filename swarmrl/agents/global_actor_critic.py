@@ -10,7 +10,7 @@ from swarmrl.actions.actions import Action
 from swarmrl.agents.agent import Agent
 from swarmrl.components.colloid import Colloid
 from swarmrl.intrinsic_reward.intrinsic_reward import IntrinsicReward
-from swarmrl.losses import Loss, ProximalPolicyLoss
+from swarmrl.losses import Loss, GlobalPolicyGradientLoss
 from swarmrl.networks.network import Network
 from swarmrl.observables.observable import Observable
 from swarmrl.tasks.task import Task
@@ -29,7 +29,7 @@ class GlobalActorCriticAgent(Agent):
         task: Task,
         observable: Observable,
         actions: dict,
-        loss: Loss = ProximalPolicyLoss(),
+        loss: Loss = GlobalPolicyGradientLoss(),
         train: bool = True,
         intrinsic_reward: IntrinsicReward = None,
     ):
@@ -127,7 +127,7 @@ class GlobalActorCriticAgent(Agent):
         Set all trajectory data to None.
         """
         self.task.kill_switch = False  # Reset here.
-        self.trajectory = GlobalTrajectoryInformation(particle_type=self.particle_type)
+        self.trajectory = GlobalTrajectoryInformation()
 
     def initialize_network(self):
         """
@@ -172,6 +172,7 @@ class GlobalActorCriticAgent(Agent):
         action_indices, log_probs = self.network.compute_action(
             observables=state_description
         )
+        
         chosen_action = np.take(list(self.actions.values()), action_indices, axis=-1)
 
         # Compute extrinsic rewards.
