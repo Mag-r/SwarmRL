@@ -17,7 +17,7 @@ from swarmrl.tasks.task import Task
 from swarmrl.utils.colloid_utils import GlobalTrajectoryInformation
 
 
-class GlobalActorCriticAgent(Agent):
+class MPIActorCriticAgent(Agent):
     """
     Class to handle the actor-critic RL Protocol.
     """
@@ -28,7 +28,6 @@ class GlobalActorCriticAgent(Agent):
         network: Network,
         task: Task,
         observable: Observable,
-        actions: dict,
         loss: Loss = GlobalPolicyGradientLoss(),
         train: bool = True,
         intrinsic_reward: IntrinsicReward = None,
@@ -44,8 +43,6 @@ class GlobalActorCriticAgent(Agent):
                 Observable for this particle type and network input
         task : Task
                 Task for this particle type to perform.
-        actions : dict
-                Actions allowed for the particle.
         loss : Loss (default=ProximalPolicyLoss)
                 Loss function to use to update the networks.
         train : bool (default=True)
@@ -58,7 +55,6 @@ class GlobalActorCriticAgent(Agent):
         self.particle_type = particle_type
         self.task = task
         self.observable = observable
-        self.actions = actions
         self.train = train
         self.loss = loss
         self.intrinsic_reward = intrinsic_reward
@@ -169,11 +165,10 @@ class GlobalActorCriticAgent(Agent):
                 List of colloids in the system.
         """
         state_description = self.observable.compute_observable(colloids)
-        action_indices, log_probs = self.network.compute_action(
+        action, log_probs = self.network.compute_action(
             observables=state_description
         )
         
-        chosen_action = np.take(list(self.actions.values()), action_indices, axis=-1)
 
         # Compute extrinsic rewards.
         rewards = self.task(colloids)
@@ -186,11 +181,11 @@ class GlobalActorCriticAgent(Agent):
         # Update the trajectory information.
         if self.train:
             self.trajectory.features.append(state_description)
-            self.trajectory.actions.append(action_indices)
+            self.trajectory.actions.append(action)
             self.trajectory.log_probs.append(log_probs)
             self.trajectory.rewards.append(rewards)
             self.trajectory.killed = self.task.kill_switch
 
         self.kill_switch = self.task.kill_switch
 
-        return chosen_action
+        return action

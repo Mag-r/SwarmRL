@@ -8,7 +8,7 @@ import pint
 import tqdm
 
 import swarmrl.engine.gaurav_sim as gaurav_sim
-
+from swarmrl.actions import MPIAction
 
 class GauravSimTest(ut.TestCase):
     def test_setup(self):
@@ -33,13 +33,13 @@ class GauravSimTest(ut.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             sim = gaurav_sim.GauravSim(params, temp_dir, with_precalc_capillary=True)
             mag_mom = Q_(1e-8, "ampere * meter**2")
-            sim.add_raft(Q_(np.array([300, 500]), "micrometer"), 0, mag_mom)
-            sim.add_raft(Q_(np.array([1000, 500]), "micrometer"), np.pi / 2, mag_mom)
-            sim.add_raft(
+            sim.add_colloids(Q_(np.array([300, 500]), "micrometer"), 0, mag_mom)
+            sim.add_colloids(Q_(np.array([1000, 500]), "micrometer"), np.pi / 2, mag_mom)
+            sim.add_colloids(
                 Q_(np.array([700, 1000]), "micrometer"), np.pi / 2 - 0.1, mag_mom
             )
 
-            action = gaurav_sim.GauravAction(
+            action = MPIAction(
                 Q_(np.array(2 * [10]), "mT").m_as("sim_magnetic_field"),
                 Q_(np.array(2 * [10]), "hertz").m_as("1/sim_time"),
                 np.array([0, np.pi / 2]),  # radian

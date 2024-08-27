@@ -8,6 +8,7 @@ import numba
 import numpy as np
 import pint
 import scipy.integrate
+from tqdm import tqdm
 
 from .engine import Engine
 from swarmrl.actions import MPIAction
@@ -678,7 +679,7 @@ class GauravSim(Engine):
             #     break
             if not isinstance(model, GlobalForceFunction):
                 raise ValueError("Model must be of type GlobalForceFunction")
-            self.current_action = model.calc_action(self.colloids)[0] 
+            self.current_action = model.calc_action(self.colloids)
             sol = scipy.integrate.solve_ivp(
                 rhs,
                 (self.time, self.time + self.params.time_slice),

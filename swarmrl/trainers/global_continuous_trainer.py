@@ -9,7 +9,7 @@ from typing import List, Tuple
 from swarmrl.engine.engine import Engine
 from swarmrl.trainers.trainer import Trainer
 from swarmrl.force_functions.global_force_fn import GlobalForceFunction
-from swarmrl.agents.global_actor_critic import GlobalActorCriticAgent
+from swarmrl.agents.MPI_actor_critic import MPIActorCriticAgent
 
 class GlobalContinuousTrainer(Trainer):
     """
@@ -43,7 +43,7 @@ class GlobalContinuousTrainer(Trainer):
         switches = []
 
         for agent in self.agents.values():
-            if isinstance(agent, GlobalActorCriticAgent):
+            if isinstance(agent, MPIActorCriticAgent):
                 ag_reward, ag_killed = agent.update_agent()
                 reward += np.mean(ag_reward)
                 switches.append(ag_killed)

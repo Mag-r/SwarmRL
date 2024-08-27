@@ -50,8 +50,8 @@ class GlobalPolicyGradientLoss(Loss):
         network_params: FrozenDict,
         network: Network,
         feature_data: jnp.ndarray,
-        action_indices: jnp.ndarray,
         rewards: jnp.ndarray,
+        log_probs: jnp.ndarray,
     ) -> jnp.array:
         """
         Compute the loss of the shared actor-critic network.
@@ -62,12 +62,12 @@ class GlobalPolicyGradientLoss(Loss):
             The actor-critic network that approximates the policy.
         network_params : FrozenDict
             Parameters of the actor-critic model used.
-        feature_data : np.ndarray (n_time_steps, n_particles, feature_dimension)
+        feature_data : np.ndarray (n_time_steps,  feature_dimension)
             Observable data for each time step and particle within the episode.
-        action_indices : np.ndarray (n_time_steps, n_particles)
+        action_indices : np.ndarray (n_time_steps)
             The actions taken by the policy for all time steps and particles during one
             episode.
-        rewards : np.ndarray (n_time_steps, n_particles)
+        rewards : np.ndarray (n_time_steps)
             The rewards received for all time steps and particles during one episode.
 
 
@@ -77,12 +77,10 @@ class GlobalPolicyGradientLoss(Loss):
             The loss of the actor-critic network for the last episode.
         """
 
-        # (n_timesteps, n_particles, n_possibilities)
+        # (n_timesteps, n_possibilities)
         logits, predicted_values = network(network_params, feature_data)
         predicted_values = predicted_values.squeeze()
-        probabilities = jax.nn.softmax(logits)  # get probabilities
-        chosen_probabilities = gather_n_dim_indices(probabilities, action_indices)
-        log_probs = jnp.log(chosen_probabilities + 1e-8)
+
         logger.debug(f"{log_probs.shape=}")
 
         returns = self.value_function(rewards)
@@ -110,7 +108,7 @@ class GlobalPolicyGradientLoss(Loss):
         ----------
         network : Network
                 actor-critic model to use in the analysis.
-        episode_data : np.ndarray (n_timesteps, n_particles, feature_dimension)
+        episode_data : np.ndarray (n_timesteps, feature_dimension)
                 Observable data for each time step and particle within the episode.
 
         Returns
@@ -118,9 +116,9 @@ class GlobalPolicyGradientLoss(Loss):
 
         """
         feature_data = jnp.array(episode_data.features)
-        action_data = jnp.array(episode_data.actions)
         reward_data = jnp.array(episode_data.rewards)
-        self.n_particles = jnp.shape(feature_data)[1]
+        log_probs = jnp.array(episode_data.log_probs)
+        # self.n_particles = jnp.shape(feature_data)[1]
         self.n_time_steps = jnp.shape(feature_data)[0]
 
         network_grad_fn = jax.value_and_grad(self._calculate_loss)
@@ -128,8 +126,8 @@ class GlobalPolicyGradientLoss(Loss):
             network.model_state.params,
             network=network,
             feature_data=feature_data,
-            action_indices=action_data,
             rewards=reward_data,
+            log_probs=log_probs,
         )
 
         network.update_model(network_grads)

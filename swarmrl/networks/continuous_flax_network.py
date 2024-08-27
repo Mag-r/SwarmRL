@@ -19,7 +19,7 @@ from optax._src.base import GradientTransformation
 from swarmrl.exploration_policies.exploration_policy import ExplorationPolicy
 from swarmrl.exploration_policies.random_exploration import RandomExploration
 from swarmrl.networks.network import Network
-from swarmrl.sampling_strategies.gumbel_distribution import GumbelDistribution
+from swarmrl.sampling_strategies.continuous_gaussian_distribution import ContinuousGaussianDistribution
 from swarmrl.sampling_strategies.sampling_strategy import SamplingStrategy
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,9 @@ class ContinuousFlaxModel(Network, ABC):
         input_shape: tuple,
         optimizer: GradientTransformation = None,
         exploration_policy: ExplorationPolicy = RandomExploration(probability=0.0),
-        sampling_strategy: SamplingStrategy = GumbelDistribution(),
+        sampling_strategy: SamplingStrategy = ContinuousGaussianDistribution(),
+        action_dimension: int = 8,
+        number_of_gaussians: int = 1,
         rng_key: int = None,
         deployment_mode: bool = False,
     ):
@@ -72,6 +74,8 @@ class ContinuousFlaxModel(Network, ABC):
         self.batch_apply_fn = jax.jit(jax.vmap(self.apply_fn, in_axes=(None, 0)))
         self.input_shape = input_shape
         self.model_state = None
+        self.action_dimension = action_dimension
+        self.number_of_gaussians = number_of_gaussians
 
         if not deployment_mode:
             self.optimizer = optimizer
@@ -177,20 +181,14 @@ class ContinuousFlaxModel(Network, ABC):
                 {"params": self.model_state["params"]}, np.array(observables)
             )
         logger.debug(f"{logits=}")  # (n_colloids, n_actions)
+        logits=logits.squeeze()
+        # Compute the action and log_probs
+        action, log_probs = self.sampling_strategy(logits, self.number_of_gaussians, self.action_dimension) 
 
-        # Compute the action
-        indices = self.sampling_strategy(logits) # TODO: change for continuous
-        # Add a small value to the log_probs to avoid log(0) errors.
-        eps = 1e-8
-        log_probs = np.log(jax.nn.softmax(logits) + eps)
 
-        indices = self.exploration_policy(
-            indices, logits.shape[-1], onp.random.randint(8759865)
-        )
-        
-        return ( # TODO: change for continuous
-            indices,
-            np.take_along_axis(log_probs, indices.reshape(-1, 1), axis=1).reshape(-1),
+        return (
+            action,
+            log_probs,
         )
 
     def export_model(self, filename: str = "model", directory: str = "Models"):
