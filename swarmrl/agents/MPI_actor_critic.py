@@ -165,6 +165,8 @@ class MPIActorCriticAgent(Agent):
                 List of colloids in the system.
         """
         state_description = self.observable.compute_observable(colloids)
+        state_description=np.expand_dims(state_description, axis=-1)
+        state_description = np.expand_dims(state_description, axis=0)
         action, log_probs = self.network.compute_action(
             observables=state_description
         )

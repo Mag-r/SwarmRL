@@ -2,18 +2,22 @@ import dataclasses
 import pathlib
 import shelve
 import typing
+import logging
 
 import h5py
 import numba
 import numpy as np
 import pint
 import scipy.integrate
-from tqdm import tqdm
+import jax
 
 from .engine import Engine
 from swarmrl.actions import MPIAction
 from swarmrl.components.colloid import Colloid
-from swarmrl.force_functions.global_force_fn import GlobalForceFunction 
+from swarmrl.force_functions.global_force_fn import GlobalForceFunction
+
+logger = logging.getLogger(__name__)
+ 
 @dataclasses.dataclass
 class GauravSimParams:
     """
@@ -660,7 +664,12 @@ class GauravSim(Engine):
             self.time = 0.0 
             self.slice_idx = 0
             if self.save_h5:
-                self._init_h5_output()
+                try:
+                    self._init_h5_output()
+                except TypeError:
+                    if self.h5_filename.exists():
+                        self.h5_filename.unlink()
+                    self._init_h5_output # not the best solution, but it works
             self.integration_initialised = True
 
         def rhs(t, state):
@@ -679,7 +688,8 @@ class GauravSim(Engine):
             #     break
             if not isinstance(model, GlobalForceFunction):
                 raise ValueError("Model must be of type GlobalForceFunction")
-            self.current_action = model.calc_action(self.colloids)
+            self.current_action = self.convert_actions_to_sim_units(model.calc_action(self.colloids))
+            logger.debug(f"{self.current_action=}")
             sol = scipy.integrate.solve_ivp(
                 rhs,
                 (self.time, self.time + self.params.time_slice),
@@ -687,7 +697,6 @@ class GauravSim(Engine):
                 method="RK23",
                 first_step=self.params.time_step,
                 max_step=self.params.time_step,
-                min_step=self.params.time_step,
                 t_eval=np.linspace(
                     self.time + self.params.snapshot_interval,
                     self.time + self.params.time_slice,
@@ -704,3 +713,19 @@ class GauravSim(Engine):
             self.time = sol.t[-1]
             state_flat = sol.y[:, -1]
             self._update_rafts_from_state(state_flat.reshape((-1, 3)))
+
+
+    def convert_actions_to_sim_units(self, action: MPIAction) -> MPIAction:
+        Q_ = self.params.ureg.Quantity
+
+        amplitudes = np.array(action.amplitudes)
+        frequencies = np.array(action.frequencies)
+        phases = np.array(action.phases)
+        offsets = np.array(action.offsets)        
+        
+        return MPIAction(
+            amplitudes=jax.device_put(Q_(amplitudes, "mT").m_as("sim_magnetic_field")),
+            frequencies=jax.device_put(Q_(frequencies, "hertz").m_as("sim_angular_velocity")),
+            phases=jax.device_put(phases),
+            offsets=jax.device_put(Q_(offsets, "mT").m_as("sim_magnetic_field")),
+        )

@@ -70,7 +70,7 @@ class ContinuousFlaxModel(Network, ABC):
             rng_key = onp.random.randint(0, 1027465782564)
         self.sampling_strategy = sampling_strategy
         self.model = flax_model
-        self.apply_fn = jax.jit(jax.vmap(self.model.apply, in_axes=(None, 0)))
+        self.apply_fn = jax.jit(jax.vmap(self.model.apply,in_axes=(None, 0)))
         self.batch_apply_fn = jax.jit(jax.vmap(self.apply_fn, in_axes=(None, 0)))
         self.input_shape = input_shape
         self.model_state = None
@@ -109,7 +109,8 @@ class ContinuousFlaxModel(Network, ABC):
                 initial state of model to then be trained.
                 If you have multiple optimizers, this will create a custom train state.
         """
-        params = self.model.init(init_rng, np.ones(list(self.input_shape)))["params"]
+        
+        params = self.model.init(init_rng, np.ones([1]+list(self.input_shape)+[1]))["params"]
         # model_summary = self.model.tabulate(jax.random.PRNGKey(1), np.ones(list(self.input_shape)))
         # print(model_summary)
         if isinstance(self.optimizer, dict):
@@ -182,6 +183,7 @@ class ContinuousFlaxModel(Network, ABC):
             )
         logger.debug(f"{logits=}")  # (n_colloids, n_actions)
         logits=logits.squeeze()
+
         # Compute the action and log_probs
         action, log_probs = self.sampling_strategy(logits, self.number_of_gaussians, self.action_dimension) 
 
