@@ -503,7 +503,7 @@ class GauravSim(Engine):
                 phi_i = state[i, 2] - r_ij_angle
                 phi_j = state[j, 2] - r_ij_angle
                 # eq. 31
-                if r_ij_norm < 2 * self.params.raft_radius:
+                if r_ij_norm < 2 * self.params.raft_radius/10:
                     # print(r_ij_norms)
                     raise ValueError("Rafts are overlapping")
                 torque_dipole_dipole = (
@@ -689,6 +689,7 @@ class GauravSim(Engine):
             if not isinstance(model, GlobalForceFunction):
                 raise ValueError("Model must be of type GlobalForceFunction")
             self.current_action = self.convert_actions_to_sim_units(model.calc_action(self.colloids))
+            print(f"{self.current_action=}")
             logger.debug(f"{self.current_action=}")
             sol = scipy.integrate.solve_ivp(
                 rhs,
@@ -718,14 +719,15 @@ class GauravSim(Engine):
     def convert_actions_to_sim_units(self, action: MPIAction) -> MPIAction:
         Q_ = self.params.ureg.Quantity
 
-        amplitudes = np.array(action.amplitudes)
-        frequencies = np.array(action.frequencies)
-        phases = np.array(action.phases)
-        offsets = np.array(action.offsets)        
+        amplitudes = np.abs(np.array(action.amplitudes))
+        amplitudes = np.minimum(amplitudes, 10)
+        frequencies = np.maximum(np.array(action.frequencies),0)
+        phases = np.maximum(np.array(action.phases),0)
+        offsets = np.maximum(np.array(action.offsets),0)
         
         return MPIAction(
-            amplitudes=jax.device_put(Q_(amplitudes, "mT").m_as("sim_magnetic_field")),
-            frequencies=jax.device_put(Q_(frequencies, "hertz").m_as("sim_angular_velocity")),
-            phases=jax.device_put(phases),
-            offsets=jax.device_put(Q_(offsets, "mT").m_as("sim_magnetic_field")),
+            amplitudes=Q_(amplitudes, "mT").m_as("sim_magnetic_field"),
+            frequencies=Q_(frequencies, "hertz").m_as("sim_angular_velocity"),
+            phases=phases,
+            offsets=Q_(offsets, "mT").m_as("sim_magnetic_field"),
         )
