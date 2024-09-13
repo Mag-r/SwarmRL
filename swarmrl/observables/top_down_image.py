@@ -12,7 +12,7 @@ class TopDownImage(Observable, ABC):
     """
     The image produced by a top-down view of the scene. Produces an grayscale image similar to a camera image.
     """
-    def __init__(self, box_length: np.ndarray, image_resolution: np.ndarray = np.array([1280,1280]), particle_type: int = 0, custom_mesh=None, is_2D=False):
+    def __init__(self, box_length: np.ndarray, image_resolution: np.ndarray = np.array([1280,1280]), particle_type: int = 0, custom_mesh=None, is_2D=True, save_images=False):
         """
         Initializes the TopDownImage object.
 
@@ -31,8 +31,19 @@ class TopDownImage(Observable, ABC):
         self.is_2D = is_2D
         self.image_resolution = image_resolution
         self.renderer = o3d.visualization.rendering.OffscreenRenderer(image_resolution[0], image_resolution[1])
-        self.renderer.scene.set_background([0, 0, 0, 1])  # Set background to black
+        self.renderer.scene.set_background([0,0,0,1])  # Set background to black
+
+        sun_dir = np.array([0, 1, -1], dtype=np.float32)
+        self.renderer.scene.set_lighting(o3d.visualization.rendering.Open3DScene.LightingProfile.SOFT_SHADOWS, sun_dir)
+
+        
+        self.save_images = save_images
+        if self.save_images:
+            self.image_count = 0
+            
+        self.create_bounding_box()
         self.logger.debug("TopDownImage initialized")
+        
 
     def create_bounding_box(self) -> None:
         """
@@ -42,7 +53,7 @@ class TopDownImage(Observable, ABC):
             None
         """
         bounding_box = o3d.geometry.TriangleMesh.create_box(width=self.box_length[0], height=self.box_length[1], depth=self.box_length[2])
-        bounding_box.paint_uniform_color([1, 1, 1])  # Set bounding box color to white
+        bounding_box.paint_uniform_color([0, 0, 0])  # Set bounding box color to black
         self.renderer.scene.add_geometry("bounding_box", bounding_box, o3d.visualization.rendering.MaterialRecord())
         self.logger.debug("Bounding box created")
 
@@ -61,21 +72,14 @@ class TopDownImage(Observable, ABC):
 
 
     def positionCameraAboveCenter(self) -> None:
-        """
-        Positions the camera above the center of the scene. Works only for Gaurav's microbots.
-
-        This method calculates the center of the scene's bounding box and positions the camera
-        above it. The camera is set up with a 60-degree field of view, and the up direction is
-        set to [0, 1, 0].
-
+        """np.asarray(image.reshape(1,self.image_resolution[0],self.image_resolution[1]))
         Parameters:
             None
 
         Returns:
             None
         """
-        bbox = self.renderer.scene.bounding_box
-        center = bbox.get_center()
+        center = self.box_length / 2  # Center of the box
         eye = center + np.array([0, 0, 10000])  # Position the camera above the center
         up = np.array([0, 1, 0])  # Up direction
         self.renderer.setup_camera(60, center, eye, up)
@@ -105,7 +109,6 @@ class TopDownImage(Observable, ABC):
                 rot_matrix = particle.get_rotation_matrix_from_xyz(colloid.director)
             particle.rotate(rot_matrix)
             particle.compute_vertex_normals()
-            particle.paint_uniform_color([0.5, 0.5, 0.5])
             self.renderer.scene.add_geometry(f"particle_{id}", particle, o3d.visualization.rendering.MaterialRecord())
         self.logger.debug("Colloids added to the image")
 
@@ -120,7 +123,7 @@ class TopDownImage(Observable, ABC):
         Returns:
             np.ndarray: The computed top-down image as a numpy array.
         """
-        self.create_bounding_box()
+        # self.create_bounding_box()
         self.add_colloids_to_image(colloids)
         self.positionCameraAboveCenter()
         image = self.renderer.render_to_image()
@@ -128,7 +131,12 @@ class TopDownImage(Observable, ABC):
         self.renderer.scene.clear_geometry()
         self.logger.info("Top-down image computed")
         image=self.rgb2gray(np.asarray(image))
-        plt.imshow(image,cmap='gray')
-        plt.savefig('top_down_image.png')
+        image = np.asarray(image)
+        if self.save_images:
+            plt.imshow(image,cmap='gray')
+            plt.axis('off')
+            plt.savefig(f'images/top_down_image_{self.image_count:03d}.png')
+            self.image_count += 1
+            self.logger.debug(f"Image saved as top_down_image_{self.image_count}.png")
         return np.asarray(image.reshape(1,self.image_resolution[0],self.image_resolution[1]))
 

@@ -272,7 +272,7 @@ class GauravSim(Engine):
 
         n_rafts = len(self.colloids)
 
-        self.h5_dataset_keys = ["Times", "Ids", "Alphas", "Unwrapped_Positions"]
+        self.h5_dataset_keys = ["Times", "Ids", "Alphas", "Unwrapped_Positions","Frequnecies", "Amplitudes", "Offsets", "Phases"]
 
         # create datasets with 3 dimension regardless of data dimension to make
         # data handling easier later
@@ -311,8 +311,38 @@ class GauravSim(Engine):
                     dtype=float,
                     **dataset_kwargs,
                 )
+                
+            action_group = h5_outfile.require_group("actions")
+            action_group.require_dataset(
+                "Amplitudes",
+                shape=(0,2),
+                maxshape=(None,2),
+                dtype=float,
+                **dataset_kwargs,
+            )    
+            action_group.require_dataset(
+                "Frequencies",
+                shape=(0,2),
+                maxshape=(None,2),
+                dtype=float,
+                **dataset_kwargs,
+            )    
+            action_group.require_dataset(
+                "Offsets",
+                shape=(0,2),
+                maxshape=(None,2),
+                dtype=float,
+                **dataset_kwargs,
+            )    
+            action_group.require_dataset(
+                "Phases",
+                shape=(0,2),
+                maxshape=(None,2),
+                dtype=float,
+                **dataset_kwargs,
+            )    
 
-    def write_to_h5(self, traj_state_flat: np.array, times: np.array):
+    def write_to_h5(self, traj_state_flat: np.array, times: np.array, action: MPIAction):
         # traj_state_flat.shape = (n_part*3, n_snapshots)
         n_new_snapshots = len(times)
         n_partcls = traj_state_flat.shape[0] // 3
@@ -331,11 +361,28 @@ class GauravSim(Engine):
             "Alphas": traj_state_h5format[:, :, 2][:, :, None],
             "Unwrapped_Positions": traj_state_h5format[:, :, :2],
         }
+        
+        action_chunk = {
+            "Amplitudes": action.amplitudes,
+            "Frequencies": action.frequencies,
+            "Offsets": action.offsets,
+            "Phases": action.phases,
+        }
 
         with h5py.File(self.h5_filename, "a") as h5_outfile:
             part_group = h5_outfile[self.h5_group_tag]
             for key, values in write_chunk.items():
                 dataset = part_group[key]
+                n_snapshots_old = dataset.shape[0]
+                dataset.resize(n_snapshots_old + n_new_snapshots, axis=0)
+                dataset[
+                    n_snapshots_old : n_snapshots_old + n_new_snapshots,
+                    ...,
+                ] = values
+                
+            action_group = h5_outfile["actions"]
+            for key, values in action_chunk.items():
+                dataset = action_group[key]
                 n_snapshots_old = dataset.shape[0]
                 dataset.resize(n_snapshots_old + n_new_snapshots, axis=0)
                 dataset[
@@ -503,9 +550,10 @@ class GauravSim(Engine):
                 phi_i = state[i, 2] - r_ij_angle
                 phi_j = state[j, 2] - r_ij_angle
                 # eq. 31
-                if r_ij_norm < 2 * self.params.raft_radius/10:
-                    # print(r_ij_norms)
-                    raise ValueError("Rafts are overlapping")
+                if r_ij_norm < 2 * self.params.raft_radius:
+                    logger.warning("Rafts are slightly overlapping")
+                    if r_ij_norm < 1.9*self.params.raft_radius:
+                        raise ValueError("Rafts are overlapping")
                 torque_dipole_dipole = (
                     self.params.magnetic_constant
                     * mag_moments[i]
@@ -544,7 +592,7 @@ class GauravSim(Engine):
             # distance to bottom left corner = the coordinates
             dist_bot_left = state[i, :2]
             # distance to top right corner
-            dist_top_right = self.params.box_length - dist_bot_left
+            dist_top_right = self.params.box_length - dist_bot_left_
             prefactor = (
                 self._calc_trans_mobility(
                     0,
@@ -709,7 +757,7 @@ class GauravSim(Engine):
                     f"Integration crashed at time {self.time}. Reason: {sol.message}"
                 )
             if self.save_h5:
-                self.write_to_h5(sol.y, sol.t)
+                self.write_to_h5(sol.y, sol.t, self.current_action)
 
             self.time = sol.t[-1]
             state_flat = sol.y[:, -1]
