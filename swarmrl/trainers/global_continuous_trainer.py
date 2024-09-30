@@ -5,11 +5,14 @@ Module to implement a simple multi-layer perceptron for the colloids.
 import numpy as np
 from rich.progress import BarColumn, Progress, TimeRemainingColumn
 from typing import List, Tuple
+import logging
 
 from swarmrl.engine.engine import Engine
 from swarmrl.trainers.trainer import Trainer
 from swarmrl.force_functions.global_force_fn import GlobalForceFunction
 from swarmrl.agents.MPI_actor_critic import MPIActorCriticAgent
+
+logger = logging.getLogger(__name__)
 
 class GlobalContinuousTrainer(Trainer):
     """
@@ -39,7 +42,7 @@ class GlobalContinuousTrainer(Trainer):
         killed : bool
                 Whether or not the task has ended the training.
         """
-        reward = 0.0  # TODO: Separate between species and optimize visualization.
+        reward = 0.0
         switches = []
 
         for agent in self.agents.values():
@@ -50,6 +53,7 @@ class GlobalContinuousTrainer(Trainer):
 
         # Create a new interaction model.
         interaction_model = GlobalForceFunction(agents=self.agents)
+        logger.info("RL updated.")
         return interaction_model, np.array(reward), any(switches)
     
     def perform_rl_training(
@@ -111,6 +115,8 @@ class GlobalContinuousTrainer(Trainer):
 
                 rewards.append(current_reward)
                 episode += 1
+                print(f"Episode {episode} reward: {current_reward}", flush=True)
+                logger.info(f"Episode {episode} reward: {current_reward}")
                 progress.update(
                     task,
                     advance=1,

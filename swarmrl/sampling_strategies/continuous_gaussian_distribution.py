@@ -62,6 +62,7 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
         assert not np.isnan(
             action_values
         ).any(), f"Action values must not be NaN."
+        # print(f"{action_values=}, {mean=}, {cov=}")
         log_probs = jax.scipy.stats.multivariate_normal.logpdf(
             action_values, mean=mean, cov=cov
         )

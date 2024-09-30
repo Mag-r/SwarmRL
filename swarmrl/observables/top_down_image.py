@@ -7,6 +7,8 @@ import copy
 import matplotlib.pyplot as plt
 from swarmrl.observables.observable import Observable
 from swarmrl.components.colloid import Colloid
+import os
+import shutil
 
 class TopDownImage(Observable, ABC):
     """
@@ -14,7 +16,7 @@ class TopDownImage(Observable, ABC):
     """
     def __init__(self, box_length: np.ndarray, image_resolution: np.ndarray = np.array([1280,1280]), particle_type: int = 0, custom_mesh=None, is_2D=True, save_images=False):
         """
-        Initializes the TopDownImage object.
+        Initializes the TopDownImage object. (Works only for MPI Rafts)
 
         Args:
             box_length (np.ndarray): The length of the box.
@@ -39,6 +41,10 @@ class TopDownImage(Observable, ABC):
         
         self.save_images = save_images
         if self.save_images:
+            # Clear the directory 'images' if it exists
+            if os.path.exists('images'):
+                shutil.rmtree('images')
+            os.makedirs('images')
             self.image_count = 0
             
         self.create_bounding_box()
@@ -138,5 +144,5 @@ class TopDownImage(Observable, ABC):
             plt.savefig(f'images/top_down_image_{self.image_count:03d}.png')
             self.image_count += 1
             self.logger.debug(f"Image saved as top_down_image_{self.image_count}.png")
-        return np.asarray(image.reshape(1,self.image_resolution[0],self.image_resolution[1]))
+        return np.asarray(image.reshape(1,self.image_resolution[0],self.image_resolution[1],1)), np.array(colloids.rotational_velocity)
 

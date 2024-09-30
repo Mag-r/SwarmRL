@@ -75,3 +75,16 @@ class GlobalForceFunction:
 
         self.kill_switch = any(switches)
         return action
+    
+    
+    def save_agents(self, directory: str = "Models"):
+        """
+        Save the agent network state.
+
+        Parameters
+        ----------
+        directory : str
+                Location to save the models.
+        """
+        for agent in self.agents:
+            self.agents[agent].save_agent(directory=directory)

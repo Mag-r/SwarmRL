@@ -147,11 +147,12 @@ class ContinuousFlaxModel(Network, ABC):
             pass
 
         else:
+            logger.info(f"Updating model")
             self.model_state = self.model_state.apply_gradients(grads=grads)
 
         # Logging for post-train model state
         logger.debug(f"{self.model_state=}")
-
+        logger.info(f"Model updated")
         self.epoch_count += 1
 
     def compute_action(self, observables: np.ndarray):

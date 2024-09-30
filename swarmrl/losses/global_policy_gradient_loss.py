@@ -97,7 +97,7 @@ class GlobalPolicyGradientLoss(Loss):
 
         # Sum over time steps and average over agents.
         critic_loss = optax.huber_loss(predicted_values, returns).sum(axis=0).sum()
-
+        logger.info(f"{critic_loss=}, {actor_loss=}")
         return actor_loss + critic_loss
 
     def compute_loss(self, network: Network, episode_data):

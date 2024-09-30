@@ -5,6 +5,7 @@ Module for the Actor-Critic RL protocol.
 import typing
 
 import numpy as np
+import logging
 
 from swarmrl.actions.actions import Action
 from swarmrl.agents.agent import Agent
@@ -16,6 +17,8 @@ from swarmrl.observables.observable import Observable
 from swarmrl.tasks.task import Task
 from swarmrl.utils.colloid_utils import GlobalTrajectoryInformation
 
+
+logger = logging.getLogger(__name__)
 
 class MPIActorCriticAgent(Agent):
     """
@@ -90,11 +93,12 @@ class MPIActorCriticAgent(Agent):
         killed = self.trajectory.killed
 
         # Compute loss for actor and critic.
+        logger.info("Computing loss.")
         self.loss.compute_loss(
             network=self.network,
             episode_data=self.trajectory,
         )
-
+        logger.info("Loss computed.")
         # Update the intrinsic reward if set.
         if self.intrinsic_reward:
             self.intrinsic_reward.update(self.trajectory)
@@ -131,7 +135,7 @@ class MPIActorCriticAgent(Agent):
         """
         self.network.reinitialize_network()
 
-    def save_agent(self, directory: str):
+    def save_agent(self, directory: str = "Models"):
         """
         Save the agent network state.
 
@@ -165,8 +169,8 @@ class MPIActorCriticAgent(Agent):
                 List of colloids in the system.
         """
         state_description = self.observable.compute_observable(colloids)
-        state_description=np.expand_dims(state_description, axis=-1)
-        state_description = np.expand_dims(state_description, axis=0)
+        # state_description=np.expand_dims(state_description, axis=-1)
+        # state_description = np.expand_dims(state_description, axis=0)
         action, log_probs = self.network.compute_action(
             observables=state_description
         )

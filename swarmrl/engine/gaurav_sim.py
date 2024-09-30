@@ -3,6 +3,7 @@ import pathlib
 import shelve
 import typing
 import logging
+import time
 
 import h5py
 import numba
@@ -10,6 +11,7 @@ import numpy as np
 import pint
 import scipy.integrate
 import jax
+import tqdm
 
 from .engine import Engine
 from swarmrl.actions import MPIAction
@@ -94,7 +96,7 @@ class Raft:
     pos: np.array
     alpha: float  # in radians
     magnetic_moment: float
-
+    rotational_velocity: float = 0.0
     def get_director(self) -> np.array:
         return np.array([np.cos(self.alpha), np.sin(self.alpha)])
 
@@ -235,6 +237,8 @@ class GauravSim(Engine):
             self.max_cap_distance = cap_distances[-1]
         self.save_h5 = save_h5
         
+            
+        
     def add_colloids(self, pos: np.array, alpha: float, magnetic_moment: float):
         self._check_already_initialised()
         self.colloids.append(
@@ -251,6 +255,7 @@ class GauravSim(Engine):
     def _update_rafts_from_state(self, state):
         for r, s in zip(self.colloids, state):
             r.pos = s[:2]
+            r.rotational_velocity = s[2] - r.alpha
             r.alpha = s[2]
 
     def _check_already_initialised(self):
@@ -269,6 +274,8 @@ class GauravSim(Engine):
         """
         self.h5_filename = self.out_folder / "trajectory.hdf5"
         self.out_folder.mkdir(parents=True, exist_ok=True)
+        if self.h5_filename.exists():
+            self.h5_filename.unlink()
 
         n_rafts = len(self.colloids)
 
@@ -345,23 +352,21 @@ class GauravSim(Engine):
     def write_to_h5(self, traj_state_flat: np.array, times: np.array, action: MPIAction):
         # traj_state_flat.shape = (n_part*3, n_snapshots)
         n_new_snapshots = len(times)
-        n_partcls = traj_state_flat.shape[0] // 3
-
+        num_particles = traj_state_flat.shape[0] // 3
         traj_state_h5format = traj_state_flat.T
         traj_state_h5format = np.reshape(
-            traj_state_h5format, (n_new_snapshots, n_partcls, 3)
+            traj_state_h5format, (n_new_snapshots, num_particles, 3)
         )
-
+        
         # add dimensions to low-dim arrays
         write_chunk = {
             "Times": times[:, None, None],
-            "Ids": np.repeat(np.arange(n_partcls)[None, :], n_new_snapshots, axis=0)[
+            "Ids": np.repeat(np.arange(num_particles)[None, :], n_new_snapshots, axis=0)[
                 :, :, None
             ],
             "Alphas": traj_state_h5format[:, :, 2][:, :, None],
             "Unwrapped_Positions": traj_state_h5format[:, :, :2],
         }
-        
         action_chunk = {
             "Amplitudes": action.amplitudes,
             "Frequencies": action.frequencies,
@@ -551,9 +556,16 @@ class GauravSim(Engine):
                 phi_j = state[j, 2] - r_ij_angle
                 # eq. 31
                 if r_ij_norm < 2 * self.params.raft_radius:
-                    logger.warning("Rafts are slightly overlapping")
-                    if r_ij_norm < 1.9*self.params.raft_radius:
-                        raise ValueError("Rafts are overlapping")
+                    logger.warning("removing overlapp, might cause softlock")
+                    for k in range(1,10):
+                        for j in range(n_rafts):
+                            for i in range(j):
+                                r_ij = state[j,:2] - state[i,:2]
+                                r_ij_dist = np.linalg.norm(r_ij) + 1E-6
+                                if r_ij_dist < 2 * self.params.raft_radius:
+                                    state[i,:2] = state[i,:2] - 1.01 * r_ij * (self.params.raft_radius/r_ij_dist-1/2)
+                                    state[j,:2] = state[j,:2] + 1.01 * r_ij * (self.params.raft_radius/r_ij_dist-1/2)
+                                    # print(f"before {np.linalg.norm(r_ij)}, after {np.linalg.norm(state[j,:2] - state[i,:2])}")
                 torque_dipole_dipole = (
                     self.params.magnetic_constant
                     * mag_moments[i]
@@ -592,7 +604,7 @@ class GauravSim(Engine):
             # distance to bottom left corner = the coordinates
             dist_bot_left = state[i, :2]
             # distance to top right corner
-            dist_top_right = self.params.box_length - dist_bot_left_
+            dist_top_right = self.params.box_length - dist_bot_left
             prefactor = (
                 self._calc_trans_mobility(
                     0,
@@ -700,10 +712,14 @@ class GauravSim(Engine):
 
     def get_rhs(self, t, state_flat: np.array):
         state = state_flat.reshape((-1, 3))
+        # Apply hard boundary conditions to ensure particles stay within the box
+        state[:, :2] = np.clip(state[:, :2], 0, self.params.box_length)
         b_field = calc_B_field(self.current_action, t)
         omega = self._get_omega(state, b_field)
         vel = self._get_vel(state, omega, b_field)
         state_derivative = np.concatenate([vel, omega[:, None]], axis=1)
+        if t-self.old_time <0.0001:
+            logger.info(f"{t=}, ")
         return state_derivative.reshape(-1)
 
     def integrate(self, n_slices: int, model: GlobalForceFunction):
@@ -712,12 +728,7 @@ class GauravSim(Engine):
             self.time = 0.0 
             self.slice_idx = 0
             if self.save_h5:
-                try:
-                    self._init_h5_output()
-                except TypeError:
-                    if self.h5_filename.exists():
-                        self.h5_filename.unlink()
-                    self._init_h5_output # not the best solution, but it works
+                self._init_h5_output()
             self.integration_initialised = True
 
         def rhs(t, state):
@@ -726,52 +737,57 @@ class GauravSim(Engine):
             return self.get_rhs(t, state)
 
         state_flat = self._get_state_from_rafts().flatten()
-        
+        self.remove_overlapp(state_flat.reshape((-1,3)))
         n_snapshots_per_slice = int(
             round(self.params.time_slice / self.params.snapshot_interval)
         )
+        
         for i in range(n_slices):
             # Check for a model termination condition.
             # if model.kill_switch:
             #     break
             if not isinstance(model, GlobalForceFunction):
                 raise ValueError("Model must be of type GlobalForceFunction")
+
+            action_calculation_time = time.time()
             self.current_action = self.convert_actions_to_sim_units(model.calc_action(self.colloids))
-            print(f"{self.current_action=}")
-            logger.debug(f"{self.current_action=}")
+            logger.info(f"{self.current_action=}")
+            integration_start_time = time.time()
+            self.old_time = self.time
             sol = scipy.integrate.solve_ivp(
                 rhs,
                 (self.time, self.time + self.params.time_slice),
                 state_flat,
+                t_eval=np.linspace(self.time,self.time+self.params.time_slice,11),
                 method="RK23",
                 first_step=self.params.time_step,
                 max_step=self.params.time_step,
-                t_eval=np.linspace(
-                    self.time + self.params.snapshot_interval,
-                    self.time + self.params.time_slice,
-                    num=n_snapshots_per_slice,
-                ),
+                atol=1e300,
+                rtol=1e1000,
             )
+            logger.info(f"{sol.message=}")
+            saving_time_start = time.time()
             if not sol.success:
                 raise RuntimeError(
                     f"Integration crashed at time {self.time}. Reason: {sol.message}"
                 )
             if self.save_h5:
                 self.write_to_h5(sol.y, sol.t, self.current_action)
-
+                model.save_agents()
+            logger.info(f"{(i+1)/n_slices * 100}% completed, \n calc act {integration_start_time- action_calculation_time}, integration {saving_time_start-integration_start_time}, saving {time.time()-saving_time_start}")
             self.time = sol.t[-1]
             state_flat = sol.y[:, -1]
-            self._update_rafts_from_state(state_flat.reshape((-1, 3)))
-
+            state = state_flat.reshape((-1, 3))
+            state[:, :2] = np.clip(state[:, :2], 0, self.params.box_length)    
+            self._update_rafts_from_state(state)
+                
 
     def convert_actions_to_sim_units(self, action: MPIAction) -> MPIAction:
         Q_ = self.params.ureg.Quantity
-
-        amplitudes = np.abs(np.array(action.amplitudes))
-        amplitudes = np.minimum(amplitudes, 10)
-        frequencies = np.maximum(np.array(action.frequencies),0)
-        phases = np.maximum(np.array(action.phases),0)
-        offsets = np.maximum(np.array(action.offsets),0)
+        amplitudes = np.array(action.amplitudes)
+        frequencies = np.array(action.frequencies)
+        phases = np.array(action.phases)
+        offsets = np.array(action.offsets)
         
         return MPIAction(
             amplitudes=Q_(amplitudes, "mT").m_as("sim_magnetic_field"),
@@ -779,3 +795,13 @@ class GauravSim(Engine):
             phases=phases,
             offsets=Q_(offsets, "mT").m_as("sim_magnetic_field"),
         )
+
+    def remove_overlapp(self, state):
+        for k in range(1,10):
+            for j in range(len(state)):
+                for i in range(j):
+                    r_ij = state[j,:2] - state[i,:2]
+                    if np.linalg.norm(r_ij) < 600:
+                        state[i,:2] = state[i,:2] - r_ij/5
+                        state[j,:2] = state[j,:2] + r_ij/5
+                        # print(f"before {np.linalg.norm(r_ij)}, after {np.linalg.norm(state[j,:2] - state[i,:2])}")
