@@ -22,7 +22,7 @@ logging.basicConfig(
     format='%(asctime)s - %(filename)s - %(levelname)s - %(message)s\n'
 )
 
-
+sequence_length=3
 resolution=1280
 number_of_gaussians=10
 action_dimension=8
@@ -34,15 +34,20 @@ obs = TopDownImage(
 task = DummyTask(np.array([10000,10000,0]),target= np.array([5000,5000,0]))
 print(f"task initialized, with normalization = {task.get_normalization()}", flush=True)
 
-class imageNet(nn.Module):
-    """A simple dense model."""
-
+class ActoCriticNet(nn.Module):
+    """A simple dense model.
+    (batch,time,features)
+    When dense at beginning, probably flatten is required
+    """
+    ScanLSTM = nn.scan(nn.OptimizedLSTMCell, variable_broadcast='params', split_rngs={'params': False}, in_axes=0, out_axes=0)
+   
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, x, carry=None):
+        sequence_length, *features = x.shape
         x = nn.avg_pool(x,window_shape=(3,3),strides=(3,3))
         x = nn.Conv(features=32, kernel_size=(3, 3), strides=(3, 3))(x)
         x = nn.relu(x)
-        
+
         x = nn.Conv(features=64, kernel_size=(3, 3), strides=(2, 2))(x)
         x = nn.relu(x)
         
@@ -50,13 +55,27 @@ class imageNet(nn.Module):
         x = nn.relu(x)
         x = nn.avg_pool(x,window_shape=(3,3),strides=(3,3))
         
-        x = nn.Conv(features=128, kernel_size=(3, 3), strides=(3, 3))(x)
+        x = nn.Conv(features=128, kernel_size=(3, 3), strides=(2, 2))(x)
         x = nn.relu(x)
         x = nn.avg_pool(x,window_shape=(3,3),strides=(3,3))
-        x = x.flatten()
+
+        x = x.reshape((sequence_length,-1))
+
+        x = nn.Dense(features=128)(x)
+        x = nn.relu(x)
         
-        y = nn.Dense(features=256)(x)
-        x = nn.Dense(features=256)(x)
+        lstm = self.ScanLSTM(features=128)
+        if carry is None:
+            carry = lstm.initialize_carry(jax.random.PRNGKey(0), x[:,0].shape)
+            logger.info("new carry initialized")
+        if len(carry) != 2:
+            raise ValueError(f"Expected carry to have 2 elements, but got {len(carry)}")
+        carry, x = lstm(carry, x)
+
+        x = nn.relu(x)  
+        x = x.flatten()
+        y = nn.Dense(features=64)(x)
+        x = nn.Dense(features=64)(x)
         x = nn.relu(x)
         y = nn.relu(y)
 
@@ -69,23 +88,9 @@ class imageNet(nn.Module):
         x = nn.Dense(features=number_of_gaussians*action_dimension*2)(x)  # Actor
         #pass output designed for variance through relu function (last number_of_gaussians*action_dimension)
         x = x.at[number_of_gaussians * action_dimension:].set(nn.relu(x.at[number_of_gaussians * action_dimension:].get()))
-        
-        return x, y
 
-class velocityNN(nn.Module):
-    @nn.compact
-    def __call__(self, x):
-        x = nn.Dense(features=256)(x)
-        x = nn.relu(x)
-        x = nn.Dense(features=32)(x)
-        x = nn.relu(x)
-        y = nn.Dense(features=1)(x)
-        y = nn.relu(y)
-        x = nn.Dense(features=number_of_gaussians * action_dimension*2)(x)
-        x = x.at[number_of_gaussians * action_dimension :].set(
-            nn.relu(x.at[number_of_gaussians * action_dimension :].get())
-        )
-        return x, y
+        return x, y, carry 
+
 
 
 
@@ -133,8 +138,8 @@ for i in range(1):
 # %%
 network = srl.networks.ContinuousFlaxModel(
     flax_model=actor_critic,
-    optimizer=optax.adam(learning_rate=0.001),
-    input_shape=(1,resolution,resolution,1), #1 are required for CNN
+    optimizer=optax.adam(learning_rate=0.0001),
+    input_shape=(sequence_length ,resolution,resolution,1), #batch implicitly 1 ,time,H,W,channels
     sampling_strategy=sampling_strategy,
     exploration_policy=exploration_policy,
     number_of_gaussians=number_of_gaussians,
@@ -151,5 +156,5 @@ protocol = srl.agents.MPIActorCriticAgent(
 )
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
-reward = rl_trainer.perform_rl_training(system_runner, 200,20)
+reward = rl_trainer.perform_rl_training(system_runner, 200,10)
 np.savetxt("rewards.txt",reward)

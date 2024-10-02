@@ -168,13 +168,11 @@ class MPIActorCriticAgent(Agent):
         colloids : List[Colloid]
                 List of colloids in the system.
         """
-        state_description = self.observable.compute_observable(colloids)
-        # state_description=np.expand_dims(state_description, axis=-1)
-        # state_description = np.expand_dims(state_description, axis=0)
+        state_description = self.state_description(colloids)
+        logger.debug(f"State description shape: {state_description.shape}")
         action, log_probs = self.network.compute_action(
-            observables=state_description
+            observables=np.array(state_description)
         )
-        
 
         # Compute extrinsic rewards.
         rewards = self.task(colloids)
@@ -186,12 +184,39 @@ class MPIActorCriticAgent(Agent):
 
         # Update the trajectory information.
         if self.train:
-            self.trajectory.features.append(state_description)
+            self.trajectory.feature_sequence.append(state_description)
+            self.trajectory.carry.append(self.network.carry)
             self.trajectory.actions.append(action)
             self.trajectory.log_probs.append(log_probs)
             self.trajectory.rewards.append(rewards)
             self.trajectory.killed = self.task.kill_switch
-
+            
         self.kill_switch = self.task.kill_switch
 
         return action
+
+    def state_description(self, colloids):
+        latest_observable = self.observable.compute_observable(colloids)
+        latest_observable = np.expand_dims(latest_observable, axis=1)
+        if self.trajectory.features.size == 0:
+            self.trajectory.features = latest_observable
+        else:
+            self.trajectory.features = np.append(self.trajectory.features, latest_observable,axis=1)
+        
+        if self.trajectory.features.shape[1] >= self.network.sequence_length:
+            state_description = self.trajectory.features[:,-self.network.sequence_length:]            
+        else:
+            state_description = self.trajectory.features[:]
+            while state_description.shape[1] < self.network.sequence_length:
+                state_description = np.concatenate(
+                    [
+                        state_description[
+                            :,
+                            : self.network.sequence_length
+                            - state_description.shape[1],
+                        ],
+                        state_description,
+                    ],
+                    axis=1,
+                )
+        return state_description

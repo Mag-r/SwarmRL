@@ -30,9 +30,11 @@ class GlobalTrajectoryInformation:
     Helper dataclass for training RL models, with a global agent.
     """
 
-    features: list = field(default_factory=list)
+    features: jnp.ndarray = field(default_factory=lambda: jnp.array([]))
+    feature_sequence: list = field(default_factory=list)
+    carry: list = field(default_factory=list)
     actions: list = field(default_factory=list)
-    log_probs: list = field(default_factory=list) # probably not available
+    log_probs: list = field(default_factory=list)
     rewards: list = field(default_factory=list)
     killed: bool = False
 

@@ -70,13 +70,15 @@ class ContinuousFlaxModel(Network, ABC):
             rng_key = onp.random.randint(0, 1027465782564)
         self.sampling_strategy = sampling_strategy
         self.model = flax_model
-        self.apply_fn = jax.jit(jax.vmap(self.model.apply,in_axes=(None, 0)))
-        self.batch_apply_fn = jax.jit(jax.vmap(self.apply_fn, in_axes=(None, 0)))
+        self.apply_fn = jax.jit(jax.vmap(self.model.apply, in_axes=(None, 0, None))) #erstes argument nicht; zwweites in erster ache, drittes nicht
+        # self.batch_apply_fn = jax.jit(jax.vmap(self.apply_fn, in_axes=(None, 0, None)))
+        self.apply_tr = jax.jit(jax.vmap(self.model.apply, in_axes=(None, 0, 0)))
         self.input_shape = input_shape
         self.model_state = None
         self.action_dimension = action_dimension
         self.number_of_gaussians = number_of_gaussians
-
+        self.sequence_length = self.input_shape[0]
+        self.carry = None
         if not deployment_mode:
             self.optimizer = optimizer
             self.exploration_policy = exploration_policy
@@ -109,7 +111,6 @@ class ContinuousFlaxModel(Network, ABC):
                 initial state of model to then be trained.
                 If you have multiple optimizers, this will create a custom train state.
         """
-        
         params = self.model.init(init_rng, np.ones(list(self.input_shape)))["params"]
         model_summary = self.model.tabulate(jax.random.PRNGKey(1), np.ones(list(self.input_shape)))
         print(model_summary)
@@ -174,21 +175,22 @@ class ContinuousFlaxModel(Network, ABC):
                 output neurons. The second element is an array of the corresponding
                 log_probs (i.e. the output of the network put through a softmax).
         """
+
         try:
-            logits, _ = self.apply_fn(
-                {"params": self.model_state.params}, np.array(observables)
+            logits, _, self.carry = self.apply_fn(
+                {"params": self.model_state.params}, np.array(observables), self.carry
             )
         except AttributeError:  # We need this for loaded models.
-            logits, _ = self.apply_fn(
-                {"params": self.model_state["params"]}, np.array(observables)
+            logits, _, self.carry = self.apply_fn(
+                {"params": self.model_state["params"]}, np.array(observables), self.carry
             )
         logger.debug(f"{logits=}")  # (n_colloids, n_actions)
         logits=logits.squeeze()
-
-        # Compute the action and log_probs
         action, log_probs = self.sampling_strategy(logits, self.number_of_gaussians, self.action_dimension) 
 
+        self.carry = tuple(np.squeeze(np.array(self.carry)))
 
+        logger.debug(f"dtype of carry: {type(self.carry)} and {np.squeeze(np.array(self.carry))=}")
         return (
             action,
             log_probs,
@@ -241,7 +243,7 @@ class ContinuousFlaxModel(Network, ABC):
         )
         self.epoch_count = epoch
 
-    def __call__(self, params: FrozenDict, episode_features):
+    def __call__(self, params: FrozenDict, episode_features, carry):
         """
         vmaped version of the model call function.
         Operates on a batch of episodes.
@@ -261,4 +263,20 @@ class ContinuousFlaxModel(Network, ABC):
                 Output of the network.
         """
 
-        return self.batch_apply_fn({"params": params}, episode_features)
+        carry = [tuple(onp.squeeze(onp.array(c))) for c in carry]
+        logger.debug(f"Episode features: {episode_features.shape}")
+        logger.debug(
+            f"Carry: {carry}, {len(carry)}, type of carry[1]: {type(carry[1])}"
+        )
+        batch_size = episode_features.shape[0]
+        logits_list = []
+        critic_list = []
+        new_carry_list = []
+
+        for i in range(batch_size):
+            x, y, new_carry = self.model.apply({"params": params},  episode_features[i], carry[i])
+            logits_list.append(x)
+            critic_list.append(y)
+            new_carry_list.append(new_carry)
+
+        return np.array(logits_list), np.array(critic_list), np.array(new_carry_list)

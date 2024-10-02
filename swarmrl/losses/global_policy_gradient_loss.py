@@ -10,6 +10,7 @@ https://spinningup.openai.com/en/latest/algorithms/vpg.html
 """
 
 import logging
+import pickle
 
 import jax
 import jax.numpy as jnp
@@ -50,6 +51,7 @@ class GlobalPolicyGradientLoss(Loss):
         network_params: FrozenDict,
         network: Network,
         feature_data: jnp.ndarray,
+        carry: jnp.ndarray,
         rewards: jnp.ndarray,
         log_probs: jnp.ndarray,
     ) -> jnp.array:
@@ -78,7 +80,7 @@ class GlobalPolicyGradientLoss(Loss):
         """
 
         # (n_timesteps, n_possibilities)
-        logits, predicted_values = network(network_params, feature_data)
+        logits, predicted_values,_ = network(network_params, feature_data, carry)
         predicted_values = predicted_values.squeeze()
 
         logger.debug(f"{log_probs.shape=}")
@@ -115,10 +117,13 @@ class GlobalPolicyGradientLoss(Loss):
         -------
 
         """
-        feature_data = jnp.array(episode_data.features)
+        feature_data = jnp.array(episode_data.feature_sequence)
+        iterations, n_particles, *feature_dimension = feature_data.shape
+        feature_data = feature_data.reshape((iterations * n_particles, *feature_dimension))
+        carry = episode_data.carry
         reward_data = jnp.array(episode_data.rewards)
         log_probs = jnp.array(episode_data.log_probs)
-        # self.n_particles = jnp.shape(feature_data)[1]
+        # self.n_particles = jnp.shape(feature_data)[1]s
         self.n_time_steps = jnp.shape(feature_data)[0]
 
         network_grad_fn = jax.value_and_grad(self._calculate_loss)
@@ -126,8 +131,9 @@ class GlobalPolicyGradientLoss(Loss):
             network.model_state.params,
             network=network,
             feature_data=feature_data,
+            carry=carry,
             rewards=reward_data,
             log_probs=log_probs,
         )
-
+        
         network.update_model(network_grads)
