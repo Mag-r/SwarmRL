@@ -20,7 +20,7 @@ from flax.core.frozen_dict import FrozenDict
 from swarmrl.losses.loss import Loss
 from swarmrl.networks.network import Network
 from swarmrl.utils.utils import gather_n_dim_indices
-from swarmrl.value_functions.global_expected_returns import GlobalExpectedReturns
+from swarmrl.value_functions.td_return import TDReturns
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class GlobalPolicyGradientLoss(Loss):
     -----
     """
 
-    def __init__(self, value_function: GlobalExpectedReturns = GlobalExpectedReturns()):
+    def __init__(self, value_function: TDReturns = TDReturns()):
         """
         Constructor for the reward class.
 
@@ -85,7 +85,7 @@ class GlobalPolicyGradientLoss(Loss):
 
         logger.debug(f"{log_probs.shape=}")
 
-        returns = self.value_function(rewards)
+        returns = self.value_function(rewards, predicted_values)
         logger.debug(f"{returns.shape}")
 
         logger.debug(f"{predicted_values.shape=}")
@@ -121,11 +121,11 @@ class GlobalPolicyGradientLoss(Loss):
         iterations, n_particles, *feature_dimension = feature_data.shape
         feature_data = feature_data.reshape((iterations * n_particles, *feature_dimension))
         carry = episode_data.carry
-        reward_data = jnp.array(episode_data.rewards)
-        log_probs = jnp.array(episode_data.log_probs)
+        feature_data = feature_data[network.sequence_length - 1:]
+        reward_data = jnp.array(episode_data.rewards)[network.sequence_length - 1:]
+        log_probs = jnp.array(episode_data.log_probs)[network.sequence_length - 1:]
         # self.n_particles = jnp.shape(feature_data)[1]s
         self.n_time_steps = jnp.shape(feature_data)[0]
-
         network_grad_fn = jax.value_and_grad(self._calculate_loss)
         _, network_grads = network_grad_fn(
             network.model_state.params,
