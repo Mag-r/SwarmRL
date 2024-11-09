@@ -32,13 +32,16 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
         """
 
         assert np.shape(logits) == (
-            number_of_gaussians * action_dimension * 2,
-        ), f"Logits must have the shape ({number_of_gaussians*action_dimension*2},), have {np.shape(logits)}"
+            number_of_gaussians * action_dimension * 2 + number_of_gaussians,
+        ), f"Logits must have the shape ({number_of_gaussians*action_dimension*2 + number_of_gaussians},), have {np.shape(logits)}"
         rng = jax.random.PRNGKey(onp.random.randint(0, 1236534623))
 
         key, subkey = jax.random.split(rng)
-        selected_gaussian = jax.random.randint(
-            subkey, minval=0, maxval=number_of_gaussians, shape=(1,)
+        # selected_gaussian = jax.random.randint(
+        #     subkey, minval=0, maxval=number_of_gaussians, shape=(1,)
+        # )[0]
+        selected_gaussian = jax.random.choice(
+            subkey, number_of_gaussians, shape=(1,), p=jax.nn.softmax(logits[-number_of_gaussians:])
         )[0]
         mean = logits[
             selected_gaussian
@@ -53,7 +56,7 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             ]
         )
 
-        epsilon = 1e-6
+        epsilon = 1e-8
         cov = cov + epsilon * np.eye(cov.shape[0])
         logger.debug(f"{cov=}")
         logger.debug(f"{mean=}")
@@ -65,7 +68,7 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
         # print(f"{action_values=}, {mean=}, {cov=}")
         log_probs = jax.scipy.stats.multivariate_normal.logpdf(
             action_values, mean=mean, cov=cov
-        )
+        ) + np.log(jax.nn.softmax(logits[-number_of_gaussians:])[selected_gaussian])
         action_values = action_values.reshape((int(action_dimension / 2), -1))
         action = MPIAction(*action_values)
         return action, log_probs

@@ -39,9 +39,9 @@ class DummyTask(Task):
         Returns:
             float: Reward, minimum expected value is -1, max is 0 
         """
-        mean_squared_spin = np.sqrt(np.mean(np.array([raft.rotational_velocity**2 for raft in colloids])))
+        mean_squared_spin = np.sqrt(np.mean(np.array([raft.rotational_velocity**2 for raft in colloids])))**2
 
-        return -mean_squared_spin/(2*np.pi)
+        return mean_squared_spin/(2*np.pi)
     
     def __call__(self, colloids: list) -> float:
-        return self.distance_reward(colloids) #+ self.spinning_reward(colloids)
+        return self.distance_reward(colloids) - self.spinning_reward(colloids)

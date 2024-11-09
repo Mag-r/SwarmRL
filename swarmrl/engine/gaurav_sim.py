@@ -255,7 +255,9 @@ class GauravSim(Engine):
     def _update_rafts_from_state(self, state):
         for r, s in zip(self.colloids, state):
             r.pos = s[:2]
-            r.rotational_velocity = s[2] - r.alpha
+            r.rotational_velocity = (s[2] - r.alpha)/self.params.time_slice
+            # if r.rotational_velocity > 10000:
+            #     raise ValueError(f"rotational velocity too high {r.rotational_velocity}")
             r.alpha = s[2]
 
     def _check_already_initialised(self):
@@ -279,7 +281,7 @@ class GauravSim(Engine):
 
         n_rafts = len(self.colloids)
 
-        self.h5_dataset_keys = ["Times", "Ids", "Alphas", "Unwrapped_Positions","Frequnecies", "Amplitudes", "Offsets", "Phases"]
+        self.h5_dataset_keys = ["Times", "Ids", "Alphas", "Angular_Velocity", "Unwrapped_Positions","Frequnecies", "Amplitudes", "Offsets", "Phases"]
 
         # create datasets with 3 dimension regardless of data dimension to make
         # data handling easier later
@@ -303,6 +305,14 @@ class GauravSim(Engine):
                     **dataset_kwargs,
                 )
             for name in ["Alphas"]:
+                part_group.require_dataset(
+                    name,
+                    shape=(0, n_rafts, 1),
+                    maxshape=(None, n_rafts, 1),
+                    dtype=float,
+                    **dataset_kwargs,
+                )
+            for name in ["Angular_Velocity"]:
                 part_group.require_dataset(
                     name,
                     shape=(0, n_rafts, 1),
@@ -365,6 +375,7 @@ class GauravSim(Engine):
                 :, :, None
             ],
             "Alphas": traj_state_h5format[:, :, 2][:, :, None],
+            "Angular_Velocity": np.array([r.rotational_velocity for r in self.colloids])[None, :, None],
             "Unwrapped_Positions": traj_state_h5format[:, :, :2],
         }
         action_chunk = {
@@ -718,8 +729,8 @@ class GauravSim(Engine):
         omega = self._get_omega(state, b_field)
         vel = self._get_vel(state, omega, b_field)
         state_derivative = np.concatenate([vel, omega[:, None]], axis=1)
-        if t-self.old_time <0.0001:
-            logger.info(f"{t=}, ")
+        if t-self.old_time <1e-5:
+            logger.debug(f"{t=}, ")
         return state_derivative.reshape(-1)
 
     def integrate(self, n_slices: int, model: GlobalForceFunction):
@@ -751,31 +762,31 @@ class GauravSim(Engine):
 
             action_calculation_time = time.time()
             self.current_action = self.convert_actions_to_sim_units(model.calc_action(self.colloids))
-            logger.info(f"{self.current_action=}")
+            logger.debug(f"{self.current_action=}")
             integration_start_time = time.time()
             self.old_time = self.time
             sol = scipy.integrate.solve_ivp(
                 rhs,
                 (self.time, self.time + self.params.time_slice),
                 state_flat,
-                t_eval=np.linspace(self.time,self.time+self.params.time_slice,11),
+                t_eval=np.linspace(self.time,self.time+self.params.time_slice,2),
                 method="RK23",
                 first_step=self.params.time_step,
                 max_step=self.params.time_step,
                 atol=1e300,
                 rtol=1e1000,
             )
-            logger.info(f"{sol.message=}")
+            logger.debug(f"{sol.message=}")
             saving_time_start = time.time()
             if not sol.success:
                 raise RuntimeError(
                     f"Integration crashed at time {self.time}. Reason: {sol.message}"
                 )
             if self.save_h5:
-                self.write_to_h5(sol.y, sol.t, self.current_action)
+                self.write_to_h5(sol.y[:,0:1], sol.t[0:1], self.current_action)
                 model.save_agents()
-            logger.info(f"{(i+1)/n_slices * 100}% completed, \n calc act {integration_start_time- action_calculation_time}, integration {saving_time_start-integration_start_time}, saving {time.time()-saving_time_start}")
-            self.time = sol.t[-1]
+            logger.debug(f"{(i+1)/n_slices * 100}% completed, \n calc act {integration_start_time- action_calculation_time}, integration {saving_time_start-integration_start_time}, saving {time.time()-saving_time_start}")
+            self.time = self.time+self.params.time_slice#sol.t[-1]
             state_flat = sol.y[:, -1]
             state = state_flat.reshape((-1, 3))
             state[:, :2] = np.clip(state[:, :2], 0, self.params.box_length)    

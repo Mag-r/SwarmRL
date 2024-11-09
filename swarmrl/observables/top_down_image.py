@@ -120,7 +120,7 @@ class TopDownImage(Observable, ABC):
 
 
     def compute_observable(self, colloids: List[Colloid]):
-        """
+        """f
         Computes the top-down image observable based on the given colloids.
 
         Args:
@@ -135,14 +135,15 @@ class TopDownImage(Observable, ABC):
         image = self.renderer.render_to_image()
         self.logger.debug("Screen captured")
         self.renderer.scene.clear_geometry()
-        self.logger.info("Top-down image computed")
+        self.logger.debug("Top-down image computed")
         image=self.rgb2gray(np.asarray(image))
         image = np.asarray(image)
         if self.save_images:
             plt.imshow(image,cmap='gray')
             plt.axis('off')
             plt.savefig(f'images/top_down_image_{self.image_count:03d}.png')
+            np.savetxt(f'images/top_down_image_{self.image_count:03d}.txt', image)
             self.image_count += 1
             self.logger.debug(f"Image saved as top_down_image_{self.image_count}.png")
-        return np.asarray(image.reshape(1,self.image_resolution[0],self.image_resolution[1],1)), np.array(colloids.rotational_velocity)
+        return np.asarray(image.reshape(1,self.image_resolution[0],self.image_resolution[1],1))
 

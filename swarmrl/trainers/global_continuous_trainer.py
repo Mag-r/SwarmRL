@@ -28,7 +28,7 @@ class GlobalContinuousTrainer(Trainer):
         return GlobalForceFunction(
             agents=self.agents,
         )
-        
+
     def update_rl(self) -> Tuple[GlobalForceFunction, np.ndarray]:
         """
         Update the RL algorithm.
@@ -53,9 +53,9 @@ class GlobalContinuousTrainer(Trainer):
 
         # Create a new interaction model.
         interaction_model = GlobalForceFunction(agents=self.agents)
-        logger.info("RL updated.")
+        logger.debug("RL updated.")
         return interaction_model, np.array(reward), any(switches)
-    
+
     def perform_rl_training(
         self,
         system_runner: Engine,
@@ -115,8 +115,9 @@ class GlobalContinuousTrainer(Trainer):
 
                 rewards.append(current_reward)
                 episode += 1
-                print(f"Episode {episode} reward: {current_reward}", flush=True)
-                logger.info(f"Episode {episode} reward: {current_reward}")
+                logger.info(
+                    f"Episode {episode}; mean immediate reward: {current_reward}"
+                )
                 progress.update(
                     task,
                     advance=1,

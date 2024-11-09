@@ -92,14 +92,16 @@ class GlobalPolicyGradientLoss(Loss):
 
         # (n_timesteps, n_particles)
         advantage = returns - predicted_values
-        logger.debug(f"{advantage=}")
+        advantage = (advantage - jnp.mean(advantage)) / (jnp.std(advantage) + 1e-8)
 
-        actor_loss = -1 * ((log_probs * advantage).sum(axis=0)).sum()
+        # logger.info(f"{advantage=}")
+
+        actor_loss = - 1 * ((log_probs * advantage).sum(axis=0)).sum()
         logger.debug(f"{actor_loss=}")
 
         # Sum over time steps and average over agents.
-        critic_loss = optax.huber_loss(predicted_values, returns).sum(axis=0).sum()
-        logger.info(f"{critic_loss=}, {actor_loss=}")
+        critic_loss =  1 * optax.huber_loss(predicted_values, returns).sum(axis=0).sum()
+        # logger.info(f"{critic_loss=}, {actor_loss=}")
         return actor_loss + critic_loss
 
     def compute_loss(self, network: Network, episode_data):
@@ -118,13 +120,14 @@ class GlobalPolicyGradientLoss(Loss):
 
         """
         feature_data = jnp.array(episode_data.feature_sequence)
+
         iterations, n_particles, *feature_dimension = feature_data.shape
         feature_data = feature_data.reshape((iterations * n_particles, *feature_dimension))
         carry = episode_data.carry
-        feature_data = feature_data[network.sequence_length - 1:]
-        reward_data = jnp.array(episode_data.rewards)[network.sequence_length - 1:]
-        log_probs = jnp.array(episode_data.log_probs)[network.sequence_length - 1:]
-        # self.n_particles = jnp.shape(feature_data)[1]s
+
+        reward_data = jnp.array(episode_data.rewards)
+        log_probs = jnp.array(episode_data.log_probs)
+
         self.n_time_steps = jnp.shape(feature_data)[0]
         network_grad_fn = jax.value_and_grad(self._calculate_loss)
         _, network_grads = network_grad_fn(
@@ -135,5 +138,11 @@ class GlobalPolicyGradientLoss(Loss):
             rewards=reward_data,
             log_probs=log_probs,
         )
-        
+        max_grad = jax.tree_util.tree_reduce(
+            lambda x, y: jnp.maximum(x, jnp.max(jnp.abs(y))), network_grads, -jnp.inf
+        )
+        logger.info(f"Maximum gradient: {max_grad}")
+        network_grads = jax.tree_map(
+            lambda g: jnp.clip(g, -100.0, 100.0), network_grads
+        )
         network.update_model(network_grads)

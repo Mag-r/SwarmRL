@@ -114,6 +114,7 @@ class ContinuousFlaxModel(Network, ABC):
         params = self.model.init(init_rng, np.ones(list(self.input_shape)))["params"]
         model_summary = self.model.tabulate(jax.random.PRNGKey(1), np.ones(list(self.input_shape)))
         print(model_summary)
+        *logits, self.carry = self.model.apply({"params": params}, np.ones(list(self.input_shape)), self.carry)
         if isinstance(self.optimizer, dict):
             CustomTrainState = self._create_custom_train_state(self.optimizer)
 
@@ -148,12 +149,11 @@ class ContinuousFlaxModel(Network, ABC):
             pass
 
         else:
-            logger.info(f"Updating model")
             self.model_state = self.model_state.apply_gradients(grads=grads)
 
         # Logging for post-train model state
         logger.debug(f"{self.model_state=}")
-        logger.info(f"Model updated")
+        logger.debug(f"Model updated")
         self.epoch_count += 1
 
     def compute_action(self, observables: np.ndarray):
@@ -213,13 +213,14 @@ class ContinuousFlaxModel(Network, ABC):
         opt_state = self.model_state.opt_state
         opt_step = self.model_state.step
         epoch = self.epoch_count
+        carry = self.carry
 
         os.makedirs(directory, exist_ok=True)
 
         with open(directory + "/" + filename + ".pkl", "wb") as f:
-            pickle.dump((model_params, opt_state, opt_step, epoch), f)
+            pickle.dump((model_params, opt_state, opt_step, epoch, carry), f)
 
-    def restore_model_state(self, filename, directory):
+    def restore_model_state(self, filename: str = "model", directory: str = "Models"):
         """
         Restore the model state from a file.
 
@@ -236,12 +237,14 @@ class ContinuousFlaxModel(Network, ABC):
         """
 
         with open(directory + "/" + filename + ".pkl", "rb") as f:
-            model_params, opt_state, opt_step, epoch = pickle.load(f)
+            model_params, opt_state, opt_step, epoch, carry = pickle.load(f)
 
         self.model_state = self.model_state.replace(
             params=model_params, opt_state=opt_state, step=opt_step
         )
         self.epoch_count = epoch
+        self.carry = carry
+        logger.info(f"Model state restored from {directory}/{filename}.pkl")
 
     def __call__(self, params: FrozenDict, episode_features, carry):
         """

@@ -49,18 +49,16 @@ class TDReturns:
 
         Returns
         -------
-        expected_returns : np.ndarray (n_time_steps, n_particles)
+        expected_returns : np.ndarray (n_time_steps)
                 Expected returns for the rewards.
         """
         expected_values = expected_values.copy()
         expected_values = np.array(expected_values)
         expected_values = np.append(expected_values[1:],0)
         logger.debug(f"{self.gamma=}")
-        expected_returns = rewards.copy()
+        expected_returns = np.zeros_like(rewards)
         logger.debug(rewards)
-        
-        expected_returns = expected_returns + self.gamma * expected_values
-
+        expected_returns = rewards + self.gamma * expected_values
         logger.debug(f"{expected_returns=}")
 
         if self.standardize:

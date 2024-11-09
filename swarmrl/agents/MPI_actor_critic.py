@@ -6,6 +6,7 @@ import typing
 
 import numpy as np
 import logging
+import jax
 
 from swarmrl.actions.actions import Action
 from swarmrl.agents.agent import Agent
@@ -93,19 +94,21 @@ class MPIActorCriticAgent(Agent):
         killed = self.trajectory.killed
 
         # Compute loss for actor and critic.
-        logger.info("Computing loss.")
+        logger.debug("Computing loss.")
         self.loss.compute_loss(
             network=self.network,
             episode_data=self.trajectory,
         )
-        logger.info("Loss computed.")
+        logger.debug("Loss computed.")
         # Update the intrinsic reward if set.
         if self.intrinsic_reward:
             self.intrinsic_reward.update(self.trajectory)
 
         # Reset the trajectory storage.
-        self.reset_trajectory()
-
+        # if self.trajectory.features.shape[1] >= 15:
+        #     self.remove_old_data(self.trajectory.features.shape[1] - 10)
+        self.remove_old_data(self.trajectory.features.shape[1] - self.network.sequence_length)
+        # self.trajectory = GlobalTrajectoryInformation()
         return rewards, killed
 
     def reset_agent(self, colloids: typing.List[Colloid]):
@@ -128,7 +131,22 @@ class MPIActorCriticAgent(Agent):
         """
         self.task.kill_switch = False  # Reset here.
         self.trajectory = GlobalTrajectoryInformation()
+    def remove_old_data(self, remove: int):
+        """Remove old data from the trajectory.
 
+        Args:
+            remove (int): number of elements to remove.
+        """
+        self.trajectory.feature_sequence = self.trajectory.feature_sequence[remove:]
+        self.trajectory.features = self.trajectory.features[:,remove:]
+        self.trajectory.carry = self.trajectory.carry[remove:]
+        self.trajectory.actions = self.trajectory.actions[remove:]
+        self.trajectory.log_probs = self.trajectory.log_probs[remove:]
+        self.trajectory.rewards = self.trajectory.rewards[remove:]
+        
+        
+
+        
     def initialize_network(self):
         """
         Initialize all of the models in the gym.
@@ -148,7 +166,7 @@ class MPIActorCriticAgent(Agent):
             filename=f"{self.__name__()}_{self.particle_type}", directory=directory
         )
 
-    def restore_agent(self, directory: str):
+    def restore_agent(self, directory: str = "Models"):
         """
         Restore the agent state from a directory.
         """
@@ -170,6 +188,7 @@ class MPIActorCriticAgent(Agent):
         """
         state_description = self.state_description(colloids)
         logger.debug(f"State description shape: {state_description.shape}")
+        previous_carry = self.network.carry
         action, log_probs = self.network.compute_action(
             observables=np.array(state_description)
         )
@@ -185,7 +204,7 @@ class MPIActorCriticAgent(Agent):
         # Update the trajectory information.
         if self.train:
             self.trajectory.feature_sequence.append(state_description)
-            self.trajectory.carry.append(self.network.carry)
+            self.trajectory.carry.append(previous_carry)
             self.trajectory.actions.append(action)
             self.trajectory.log_probs.append(log_probs)
             self.trajectory.rewards.append(rewards)
@@ -204,19 +223,15 @@ class MPIActorCriticAgent(Agent):
             self.trajectory.features = np.append(self.trajectory.features, latest_observable,axis=1)
         
         if self.trajectory.features.shape[1] >= self.network.sequence_length:
-            state_description = self.trajectory.features[:,-self.network.sequence_length:]            
+            state_description = self.trajectory.features[:,-self.network.sequence_length:]      
         else:
             state_description = self.trajectory.features[:]
-            while state_description.shape[1] < self.network.sequence_length:
-                state_description = np.concatenate(
-                    [
-                        state_description[
-                            :,
-                            : self.network.sequence_length
-                            - state_description.shape[1],
-                        ],
-                        state_description,
-                    ],
-                    axis=1,
-                )
+            state_description = np.concatenate(
+                [
+                    np.repeat(state_description[:, 0:1], self.network.sequence_length - state_description.shape[1], axis=1),
+                    state_description,
+                ],
+                axis=1,
+            )
+            
         return state_description
