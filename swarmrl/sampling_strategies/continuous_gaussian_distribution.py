@@ -56,9 +56,9 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             ]
         )
 
-        epsilon = 1e-8
-        cov = cov + epsilon * np.eye(cov.shape[0])
-        logger.debug(f"{cov=}")
+        epsilon = 1e-10
+        cov = epsilon *  np.eye(cov.shape[0])
+        # logger.debug(f"{cov=}")
         logger.debug(f"{mean=}")
         assert (np.diag(cov)>0).all(), f"Covariance matrix must be positive definite, {np.diag(cov)=}"
         action_values = jax.random.multivariate_normal(subkey, mean=mean, cov=cov)

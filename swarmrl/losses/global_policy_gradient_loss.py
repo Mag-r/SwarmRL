@@ -45,12 +45,14 @@ class GlobalPolicyGradientLoss(Loss):
         self.value_function = value_function
         self.n_particles = None
         self.n_time_steps = None
+        self.error_predicted_reward = None
 
     def _calculate_loss(
         self,
         network_params: FrozenDict,
         network: Network,
         feature_data: jnp.ndarray,
+        next_feature_data: jnp.ndarray,
         carry: jnp.ndarray,
         rewards: jnp.ndarray,
         log_probs: jnp.ndarray,
@@ -80,28 +82,31 @@ class GlobalPolicyGradientLoss(Loss):
         """
 
         # (n_timesteps, n_possibilities)
-        logits, predicted_values,_ = network(network_params, feature_data, carry)
+        _, predicted_values,_ = network(network_params, feature_data, carry)
+        _, next_predicted_values,_ = network(network_params, next_feature_data, carry)
         predicted_values = predicted_values.squeeze()
-
+        next_predicted_values = next_predicted_values.squeeze()
         logger.debug(f"{log_probs.shape=}")
 
-        returns = self.value_function(rewards, predicted_values)
+        returns = self.value_function(rewards, next_predicted_values)
         logger.debug(f"{returns.shape}")
 
         logger.debug(f"{predicted_values.shape=}")
 
         # (n_timesteps, n_particles)
         advantage = returns - predicted_values
-        advantage = (advantage - jnp.mean(advantage)) / (jnp.std(advantage) + 1e-8)
+        # advantage = (advantage - jnp.mean(advantage)) / (jnp.std(advantage) + 1e-10)
 
-        # logger.info(f"{advantage=}")
-
-        actor_loss = - 1 * ((log_probs * advantage).sum(axis=0)).sum()
-        logger.debug(f"{actor_loss=}")
+        logger.info(f"{advantage=}")
+        logger.info(f"{log_probs=}")
 
         # Sum over time steps and average over agents.
-        critic_loss =  1 * optax.huber_loss(predicted_values, returns).sum(axis=0).sum()
-        # logger.info(f"{critic_loss=}, {actor_loss=}")
+        critic_loss =  1.0 * jnp.mean(jnp.square(advantage))
+        advantage = jax.lax.stop_gradient(advantage)
+        actor_loss = - 1.0 * (log_probs * advantage).mean()
+
+        logger.info(f"{critic_loss=}, {actor_loss=}")
+        self.error_predicted_reward = jnp.abs(advantage)
         return actor_loss + critic_loss
 
     def compute_loss(self, network: Network, episode_data):
@@ -120,9 +125,11 @@ class GlobalPolicyGradientLoss(Loss):
 
         """
         feature_data = jnp.array(episode_data.feature_sequence)
-
+        next_feature_data = jnp.array(episode_data.next_features)
         iterations, n_particles, *feature_dimension = feature_data.shape
         feature_data = feature_data.reshape((iterations * n_particles, *feature_dimension))
+        iterations_next, *_ = next_feature_data.shape
+        next_feature_data = next_feature_data.reshape(((iterations_next) * n_particles, *feature_dimension))
         carry = episode_data.carry
 
         reward_data = jnp.array(episode_data.rewards)
@@ -134,6 +141,7 @@ class GlobalPolicyGradientLoss(Loss):
             network.model_state.params,
             network=network,
             feature_data=feature_data,
+            next_feature_data=next_feature_data,
             carry=carry,
             rewards=reward_data,
             log_probs=log_probs,
@@ -141,8 +149,15 @@ class GlobalPolicyGradientLoss(Loss):
         max_grad = jax.tree_util.tree_reduce(
             lambda x, y: jnp.maximum(x, jnp.max(jnp.abs(y))), network_grads, -jnp.inf
         )
+        mean_grad = jax.tree_util.tree_reduce(
+            lambda x, y: x + jnp.sum(jnp.abs(y)), network_grads, 0.0
+        ) / jax.tree_util.tree_reduce(
+            lambda x, y: x + jnp.size(y), network_grads, 0.0
+        )
+        logger.info(f"Mean gradient: {mean_grad}")
         logger.info(f"Maximum gradient: {max_grad}")
         network_grads = jax.tree_map(
             lambda g: jnp.clip(g, -100.0, 100.0), network_grads
         )
+        episode_data.error_predicted_reward = self.error_predicted_reward
         network.update_model(network_grads)

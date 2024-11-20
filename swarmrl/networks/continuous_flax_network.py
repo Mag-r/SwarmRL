@@ -70,6 +70,7 @@ class ContinuousFlaxModel(Network, ABC):
             rng_key = onp.random.randint(0, 1027465782564)
         self.sampling_strategy = sampling_strategy
         self.model = flax_model
+
         self.apply_fn = jax.jit(jax.vmap(self.model.apply, in_axes=(None, 0, None))) #erstes argument nicht; zwweites in erster ache, drittes nicht
         # self.batch_apply_fn = jax.jit(jax.vmap(self.apply_fn, in_axes=(None, 0, None)))
         self.apply_tr = jax.jit(jax.vmap(self.model.apply, in_axes=(None, 0, 0)))
@@ -175,7 +176,6 @@ class ContinuousFlaxModel(Network, ABC):
                 output neurons. The second element is an array of the corresponding
                 log_probs (i.e. the output of the network put through a softmax).
         """
-
         try:
             logits, _, self.carry = self.apply_fn(
                 {"params": self.model_state.params}, np.array(observables), self.carry
