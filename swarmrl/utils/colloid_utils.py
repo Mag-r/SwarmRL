@@ -36,6 +36,8 @@ class GlobalTrajectoryInformation:
     actions: list = field(default_factory=list)
     log_probs: list = field(default_factory=list)
     rewards: list = field(default_factory=list)
+    next_features: list = field(default_factory=list)
+    error_predicted_reward: list = field(default_factory=list)
     killed: bool = False
 
 

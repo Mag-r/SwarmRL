@@ -236,6 +236,7 @@ class GauravSim(Engine):
             self.capillary_torque = cap_torque
             self.max_cap_distance = cap_distances[-1]
         self.save_h5 = save_h5
+        self.noise = 0.01
         
             
         
@@ -481,7 +482,7 @@ class GauravSim(Engine):
 
         # select a cut-off distance below which all the attractive force
         # (negative-valued) becomes zero,due to raft wall-wall repulsion
-        capAttractionZeroCutoff = 0
+        capAttractionZeroCutoff = 150
         mask = np.concatenate(
             (
                 capillaryForcesDistancesAsRows[:capAttractionZeroCutoff, :] < 0,
@@ -752,7 +753,7 @@ class GauravSim(Engine):
         n_snapshots_per_slice = int(
             round(self.params.time_slice / self.params.snapshot_interval)
         )
-        
+        self.noise = self.noise *0.999
         for i in range(n_slices):
             # Check for a model termination condition.
             # if model.kill_switch:
@@ -761,7 +762,7 @@ class GauravSim(Engine):
                 raise ValueError("Model must be of type GlobalForceFunction")
 
             action_calculation_time = time.time()
-            self.current_action = self.convert_actions_to_sim_units(model.calc_action(self.colloids))
+            self.current_action = self.convert_actions_to_sim_units(model.calc_action(self.colloids), self.noise)
             logger.debug(f"{self.current_action=}")
             integration_start_time = time.time()
             self.old_time = self.time
@@ -793,18 +794,19 @@ class GauravSim(Engine):
             self._update_rafts_from_state(state)
                 
 
-    def convert_actions_to_sim_units(self, action: MPIAction) -> MPIAction:
+    def convert_actions_to_sim_units(self, action: MPIAction, noise: float = 0.1) -> MPIAction:
         Q_ = self.params.ureg.Quantity
-        amplitudes = np.array(action.amplitudes)
-        frequencies = np.array(action.frequencies)
-        phases = np.array(action.phases)
-        offsets = np.array(action.offsets)
+        
+        amplitudes = np.array(action.amplitudes) + np.random.normal(0,noise,2)
+        frequencies = np.array(action.frequencies) + np.random.normal(0,noise,2)
+        phases = np.array(action.phases) + np.random.normal(0,noise,2)
+        offsets = np.array(action.offsets) + np.random.normal(0,noise,2)
         
         return MPIAction(
-            amplitudes=Q_(amplitudes, "mT").m_as("sim_magnetic_field"),
+            amplitudes=Q_(amplitudes, "cT").m_as("sim_magnetic_field"),
             frequencies=Q_(frequencies, "hertz").m_as("sim_angular_velocity"),
             phases=phases,
-            offsets=Q_(offsets, "mT").m_as("sim_magnetic_field"),
+            offsets=Q_(offsets, "cT").m_as("sim_magnetic_field"),
         )
 
     def remove_overlapp(self, state):
@@ -812,7 +814,7 @@ class GauravSim(Engine):
             for j in range(len(state)):
                 for i in range(j):
                     r_ij = state[j,:2] - state[i,:2]
-                    if np.linalg.norm(r_ij) < 600:
+                    if np.linalg.norm(r_ij) < self.params.raft_radius*2:
                         state[i,:2] = state[i,:2] - r_ij/5
                         state[j,:2] = state[j,:2] + r_ij/5
                         # print(f"before {np.linalg.norm(r_ij)}, after {np.linalg.norm(state[j,:2] - state[i,:2])}")

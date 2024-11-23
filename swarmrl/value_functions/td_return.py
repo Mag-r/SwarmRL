@@ -39,7 +39,7 @@ class TDReturns:
         self.eps = np.finfo(np.float32).eps.item()
 
     @partial(jax.jit, static_argnums=(0,))
-    def __call__(self, rewards: np.ndarray, expected_values: np.ndarray) -> np.ndarray:
+    def __call__(self, rewards: np.ndarray, expected_future_rewards: np.ndarray) -> np.ndarray:
         """
         Call function for the expected returns.
         Parameters
@@ -52,13 +52,14 @@ class TDReturns:
         expected_returns : np.ndarray (n_time_steps)
                 Expected returns for the rewards.
         """
-        expected_values = expected_values.copy()
-        expected_values = np.array(expected_values)
-        expected_values = np.append(expected_values[1:],0)
+
         logger.debug(f"{self.gamma=}")
         expected_returns = np.zeros_like(rewards)
         logger.debug(rewards)
-        expected_returns = rewards + self.gamma * expected_values
+        logger.debug(f"{np.shape(expected_future_rewards)=}, {np.shape(expected_returns)=}")
+        if np.shape(expected_future_rewards) != np.shape(expected_returns):
+                expected_future_rewards = np.append(expected_future_rewards, 0)
+        expected_returns = rewards + self.gamma * expected_future_rewards
         logger.debug(f"{expected_returns=}")
 
         if self.standardize:

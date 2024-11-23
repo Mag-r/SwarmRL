@@ -15,6 +15,7 @@ class DummyTask(Task):
         random_pos = random.uniform(key, (10000,3), minval=0, maxval=box_length)
         self.normalization_distance = np.linalg.norm(random_pos - self.target.reshape(1,3),axis=-1).mean()
         logger.debug(f"{self.normalization_distance=}")
+        self.old_distance = None
         
     def get_normalization(self):
         return self.normalization_distance
@@ -28,12 +29,18 @@ class DummyTask(Task):
         Returns:
             float: Reward, minimum expected value is -1, max is 0 
         """
-        distance_target = np.linalg.norm(np.array([raft.pos - self.target for raft in colloids]),axis=-1)
-        return -distance_target.mean()/self.normalization_distance
+        distance_target = np.linalg.norm(np.array([raft.pos[:2] - self.target[:2] for raft in colloids]),axis=-1)
+        if self.old_distance is None:
+            self.old_distance = distance_target.mean()
+            logger.debug(f"old_distance initialized to {self.old_distance}")
+        reward = self.old_distance - distance_target.mean()
+        logger.debug(f"{reward=}, old_distance={self.old_distance}, new_distance={distance_target.mean()}")
+        self.old_distance = distance_target.mean()
+        return reward
     
     def spinning_reward(self, colloids: list) -> float:
         """     
-        Args:
+        Args:s
             colloids (list): _description_
 
         Returns:
@@ -44,4 +51,4 @@ class DummyTask(Task):
         return mean_squared_spin/(2*np.pi)
     
     def __call__(self, colloids: list) -> float:
-        return self.distance_reward(colloids) - self.spinning_reward(colloids)
+        return self.distance_reward(colloids) #- self.spinning_reward(colloids)

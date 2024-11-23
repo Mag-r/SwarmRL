@@ -105,10 +105,9 @@ class MPIActorCriticAgent(Agent):
             self.intrinsic_reward.update(self.trajectory)
 
         # Reset the trajectory storage.
-        # if self.trajectory.features.shape[1] >= 15:
-        #     self.remove_old_data(self.trajectory.features.shape[1] - 10)
-        self.remove_old_data(self.trajectory.features.shape[1] - self.network.sequence_length)
+        self.remove_old_data(self.trajectory.features.shape[1] - 150)
         # self.trajectory = GlobalTrajectoryInformation()
+        
         return rewards, killed
 
     def reset_agent(self, colloids: typing.List[Colloid]):
@@ -131,20 +130,41 @@ class MPIActorCriticAgent(Agent):
         """
         self.task.kill_switch = False  # Reset here.
         self.trajectory = GlobalTrajectoryInformation()
+        
+        
     def remove_old_data(self, remove: int):
         """Remove old data from the trajectory.
 
         Args:
-            remove (int): number of elements to remove.
+            keep (int): number of elements to remove.
         """
-        self.trajectory.feature_sequence = self.trajectory.feature_sequence[remove:]
-        self.trajectory.features = self.trajectory.features[:,remove:]
-        self.trajectory.carry = self.trajectory.carry[remove:]
-        self.trajectory.actions = self.trajectory.actions[remove:]
-        self.trajectory.log_probs = self.trajectory.log_probs[remove:]
-        self.trajectory.rewards = self.trajectory.rewards[remove:]
-        
-        
+        if remove > 0:
+            indices = np.arange(self.trajectory.features.shape[1])
+            probabilities = self.trajectory.error_predicted_reward
+            probabilities = 1 / probabilities
+            probabilities = probabilities.at[-10:].set(0)
+            key = jax.random.PRNGKey(0)
+            selected_indices = jax.random.choice(key, indices, shape=(remove,), replace=False, p=probabilities)
+            selected_indices = np.array(jax.device_get(selected_indices), dtype=int)  # Ensure selected_indices is a NumPy array
+
+            # Get the list of all indices without the selected ones
+            all_indices = set(indices)
+            selected_indices = set(selected_indices)
+            selected_indices = np.array(list(all_indices - selected_indices), dtype=int)
+
+            logger.info(f"Selected indices to keep: {selected_indices} out of total {len(indices)}")
+            # Remove elements at the specified indices
+            self.trajectory.feature_sequence = [self.trajectory.feature_sequence[i] for i in selected_indices]
+            self.trajectory.next_features = [self.trajectory.next_features[i] for i in selected_indices if i < len(indices)-1]
+            self.trajectory.features = self.trajectory.features[:, selected_indices]
+            self.trajectory.carry = [self.trajectory.carry[i] for i in selected_indices]
+            self.trajectory.actions = [self.trajectory.actions[i] for i in selected_indices]
+            self.trajectory.log_probs = [self.trajectory.log_probs[i] for i in selected_indices]
+            self.trajectory.rewards = [self.trajectory.rewards[i] for i in selected_indices]
+            self.trajectory.error_predicted_reward = self.trajectory.error_predicted_reward[selected_indices]
+            # Check if the last element is in the selected indices and remove it if necessary
+
+                
 
         
     def initialize_network(self):
@@ -209,6 +229,8 @@ class MPIActorCriticAgent(Agent):
             self.trajectory.log_probs.append(log_probs)
             self.trajectory.rewards.append(rewards)
             self.trajectory.killed = self.task.kill_switch
+            if len(self.trajectory.feature_sequence)> 1:
+                self.trajectory.next_features.append(state_description)
             
         self.kill_switch = self.task.kill_switch
 
@@ -217,7 +239,7 @@ class MPIActorCriticAgent(Agent):
     def state_description(self, colloids):
         latest_observable = self.observable.compute_observable(colloids)
         latest_observable = np.expand_dims(latest_observable, axis=1)
-        if self.trajectory.features.size == 0:
+        if self.trajectory.features.size == 0 and self.train:
             self.trajectory.features = latest_observable
         else:
             self.trajectory.features = np.append(self.trajectory.features, latest_observable,axis=1)
