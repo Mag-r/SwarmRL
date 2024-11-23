@@ -40,7 +40,7 @@ class ActoCriticNet(nn.Module):
     When dense at beginning, probably flatten is required
     """
 
-    features: int = 32  # Number of LSTM features
+
 
     def setup(self):
         # Define a scanned LSTM cell
@@ -60,7 +60,7 @@ class ActoCriticNet(nn.Module):
         # x = nn.avg_pool(x, window_shape=(3, 3), strides=(3, 3))
 
         # Apply ConvLSTM
-        lstm = self.ScanLSTM(features=32, kernel_size=(3, 3))
+        lstm = self.ScanLSTM(features= 12, kernel_size=(3, 3))
 
         # Initialize carry if it's not provided
         if carry is None:
@@ -72,14 +72,14 @@ class ActoCriticNet(nn.Module):
 
         # Apply relu activation to the LSTM output (memory)
         x = nn.relu(memory)
-        x = nn.Conv(features=32, kernel_size=(3, 3), strides=(3, 3))(x)
+        x = nn.Conv(features=12, kernel_size=(3, 3), strides=(3, 3))(x)
         x = nn.relu(x)
 
-        x = nn.Conv(features=32, kernel_size=(3, 3), strides=(3, 3))(x)
+        x = nn.Conv(features=12, kernel_size=(3, 3), strides=(3, 3))(x)
         x = nn.relu(x)
         x = nn.avg_pool(x,window_shape=(3,3),strides=(3,3))
 
-        x = nn.Conv(features=32, kernel_size=(3, 3), strides=(3, 3))(x)
+        x = nn.Conv(features=12, kernel_size=(3, 3), strides=(3, 3))(x)
         x = nn.relu(x)
 
         
@@ -91,17 +91,17 @@ class ActoCriticNet(nn.Module):
         # x = x.reshape((sequence_length, -1))
         # x = nn.relu(x)
 
-        x = nn.Dense(features=64)(x)
+        x = nn.Dense(features=12)(x)
         x = nn.relu(x)      
         x = x.flatten()
 
-        y = nn.Dense(features=64)(x)
-        x = nn.Dense(features=64)(x)
+        y = nn.Dense(features=12)(x)
+        x = nn.Dense(features=12)(x)
         x = nn.relu(x)
         y = nn.relu(y)
 
-        y = nn.Dense(features=32)(y)
-        x = nn.Dense(features=128)(x)
+        y = nn.Dense(features=12)(y)
+        x = nn.Dense(features=12)(x)
         x = nn.relu(x)
         y = nn.relu(y)
 

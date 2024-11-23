@@ -92,16 +92,15 @@ class GlobalPolicyGradientLoss(Loss):
 
         # (n_timesteps, n_particles)
         advantage = returns - predicted_values
-        advantage = (advantage - jnp.mean(advantage)) / (jnp.std(advantage) + 1e-8)
+        # advantage = (advantage - jnp.mean(advantage)) / (jnp.std(advantage) + 1e-8)
 
-        # logger.info(f"{advantage=}")
-
-        actor_loss = - 1 * ((log_probs * advantage).sum(axis=0)).sum()
-        logger.debug(f"{actor_loss=}")
-
+        logger.debug(f"{advantage=}")
         # Sum over time steps and average over agents.
-        critic_loss =  1 * optax.huber_loss(predicted_values, returns).sum(axis=0).sum()
-        # logger.info(f"{critic_loss=}, {actor_loss=}")
+        critic_loss =  1 * optax.huber_loss(predicted_values, returns).sum()
+        advantage = jax.lax.stop_gradient(advantage)
+        actor_loss = - 1 * (log_probs * advantage).sum()
+        
+        logger.debug(f"{critic_loss=}, {actor_loss=}")
         return actor_loss + critic_loss
 
     def compute_loss(self, network: Network, episode_data):
