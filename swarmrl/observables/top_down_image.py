@@ -14,7 +14,7 @@ class TopDownImage(Observable, ABC):
     """
     The image produced by a top-down view of the scene. Produces an grayscale image similar to a camera image.
     """
-    def __init__(self, box_length: np.ndarray, image_resolution: np.ndarray = np.array([1280,1280]), particle_type: int = 0, custom_mesh=None, is_2D=True, save_images=False):
+    def __init__(self, box_length: np.ndarray, batch_size: int, image_resolution: np.ndarray = np.array([1280,1280]), particle_type: int = 0, custom_mesh=None, is_2D=True, save_images=False):
         """
         Initializes the TopDownImage object. (Works only for MPI Rafts)
 
@@ -28,6 +28,7 @@ class TopDownImage(Observable, ABC):
         self.logger = logging.getLogger(__name__)
         super().__init__(particle_type=particle_type)
         self.box_length = box_length
+        self.batch_size = batch_size
         self.particle_type = particle_type
         self.custom_mesh = custom_mesh
         self.is_2D = is_2D
@@ -145,5 +146,5 @@ class TopDownImage(Observable, ABC):
             np.savetxt(f'images/top_down_image_{self.image_count:03d}.txt', image)
             self.image_count += 1
             self.logger.debug(f"Image saved as top_down_image_{self.image_count}.png")
-        return np.asarray(image.reshape(1,self.image_resolution[0],self.image_resolution[1],1))
+        return np.asarray(image.reshape(1, self.image_resolution[0],self.image_resolution[1],1))
 

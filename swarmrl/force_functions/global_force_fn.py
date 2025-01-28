@@ -8,7 +8,9 @@ import numpy as np
 
 from swarmrl.actions.actions import Action
 from swarmrl.components.colloid import Colloid
+import logging
 
+logger = logging.getLogger(__name__)
 
 class GlobalForceFunction:
     """

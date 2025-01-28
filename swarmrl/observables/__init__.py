@@ -10,6 +10,7 @@ from swarmrl.observables.particle_sensing import ParticleSensing
 from swarmrl.observables.position import PositionObservable
 from swarmrl.observables.subdivided_vision_cones import SubdividedVisionCones
 from swarmrl.observables.pos_rotation import PosRotationObservable
+from swarmrl.observables.image import ImageObservable
 
 __all__ = [
     PositionObservable.__name__,
@@ -20,4 +21,5 @@ __all__ = [
     ParticleSensing.__name__,
     SubdividedVisionCones.__name__,
     PosRotationObservable.__name__,
+    ImageObservable.__name__,
 ]

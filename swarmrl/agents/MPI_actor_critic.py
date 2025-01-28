@@ -5,6 +5,7 @@ Module for the Actor-Critic RL protocol.
 import typing
 
 import numpy as np
+from jax import numpy as jnp
 import logging
 import jax
 
@@ -30,6 +31,7 @@ class MPIActorCriticAgent(Agent):
         self,
         particle_type: int,
         network: Network,
+        target_network: Network,
         task: Task,
         observable: Observable,
         loss: Loss = GlobalPolicyGradientLoss(),
@@ -56,6 +58,7 @@ class MPIActorCriticAgent(Agent):
         """
         # Properties of the agent.
         self.network = network
+        self.target_network = target_network
         self.particle_type = particle_type
         self.task = task
         self.observable = observable
@@ -97,6 +100,7 @@ class MPIActorCriticAgent(Agent):
         logger.debug("Computing loss.")
         self.loss.compute_loss(
             network=self.network,
+            target_network=self.target_network,
             episode_data=self.trajectory,
         )
         logger.debug("Loss computed.")
@@ -105,7 +109,7 @@ class MPIActorCriticAgent(Agent):
             self.intrinsic_reward.update(self.trajectory)
 
         # Reset the trajectory storage.
-        self.remove_old_data(self.trajectory.features.shape[1] - 150)
+        self.remove_old_data(self.trajectory.features.shape[1] - 40)
         # self.trajectory = GlobalTrajectoryInformation()
         
         return rewards, killed
@@ -139,10 +143,11 @@ class MPIActorCriticAgent(Agent):
             keep (int): number of elements to remove.
         """
         if remove > 0:
-            indices = np.arange(self.trajectory.features.shape[1])
-            probabilities = self.trajectory.error_predicted_reward
+            indices = np.arange(len(self.loss.error_predicted_reward))
+            probabilities = jnp.array(self.loss.error_predicted_reward)
             probabilities = 1 / probabilities
             probabilities = probabilities.at[-10:].set(0)
+
             key = jax.random.PRNGKey(0)
             selected_indices = jax.random.choice(key, indices, shape=(remove,), replace=False, p=probabilities)
             selected_indices = np.array(jax.device_get(selected_indices), dtype=int)  # Ensure selected_indices is a NumPy array
@@ -151,39 +156,38 @@ class MPIActorCriticAgent(Agent):
             all_indices = set(indices)
             selected_indices = set(selected_indices)
             selected_indices = np.array(list(all_indices - selected_indices), dtype=int)
-
-            logger.info(f"Selected indices to keep: {selected_indices} out of total {len(indices)}")
+            
             # Remove elements at the specified indices
             self.trajectory.feature_sequence = [self.trajectory.feature_sequence[i] for i in selected_indices]
             self.trajectory.next_features = [self.trajectory.next_features[i] for i in selected_indices if i < len(indices)-1]
             self.trajectory.features = self.trajectory.features[:, selected_indices]
             self.trajectory.carry = [self.trajectory.carry[i] for i in selected_indices]
+            self.trajectory.next_carry = [self.trajectory.next_carry[i] for i in selected_indices if i < len(indices)-1]
             self.trajectory.actions = [self.trajectory.actions[i] for i in selected_indices]
-            self.trajectory.log_probs = [self.trajectory.log_probs[i] for i in selected_indices]
             self.trajectory.rewards = [self.trajectory.rewards[i] for i in selected_indices]
-            self.trajectory.error_predicted_reward = self.trajectory.error_predicted_reward[selected_indices]
-            # Check if the last element is in the selected indices and remove it if necessary
 
                 
-
-        
     def initialize_network(self):
         """
         Initialize all of the models in the gym.
         """
         self.network.reinitialize_network()
+        self.target_network.reinitialize_network()
 
     def save_agent(self, directory: str = "Models"):
         """
         Save the agent network state.
 
         Parameters
-        ----------
+        ----------swarmrl/losses/global_policy_gradient_loss.py
         directory : str
                 Location to save the models.
         """
         self.network.export_model(
             filename=f"{self.__name__()}_{self.particle_type}", directory=directory
+        )
+        self.target_network.export_model(
+            filename=f"{self.__name__()}_{self.particle_type}_target", directory=directory
         )
 
     def restore_agent(self, directory: str = "Models"):
@@ -192,6 +196,9 @@ class MPIActorCriticAgent(Agent):
         """
         self.network.restore_model_state(
             filename=f"{self.__name__()}_{self.particle_type}", directory=directory
+        )
+        self.target_network.restore_model_state(
+            filename=f"{self.__name__()}_{self.particle_type}_target", directory=directory
         )
 
     def calc_action(self, colloids: typing.List[Colloid]) -> typing.List[Action]:
@@ -207,12 +214,11 @@ class MPIActorCriticAgent(Agent):
                 List of colloids in the system.
         """
         state_description = self.state_description(colloids)
-        logger.debug(f"State description shape: {state_description.shape}")
         previous_carry = self.network.carry
-        action, log_probs = self.network.compute_action(
+        action = self.network.compute_action(
             observables=np.array(state_description)
-        )
-
+        )[np.shape(state_description)[0]-1]
+        next_carry = self.network.carry
         # Compute extrinsic rewards.
         rewards = self.task(colloids)
         # Compute intrinsic rewards if set.
@@ -220,20 +226,18 @@ class MPIActorCriticAgent(Agent):
             rewards += self.intrinsic_reward.compute_reward(
                 episode_data=self.trajectory
             )
-
         # Update the trajectory information.
         if self.train:
             self.trajectory.feature_sequence.append(state_description)
             self.trajectory.carry.append(previous_carry)
             self.trajectory.actions.append(action)
-            self.trajectory.log_probs.append(log_probs)
             self.trajectory.rewards.append(rewards)
             self.trajectory.killed = self.task.kill_switch
-            if len(self.trajectory.feature_sequence)> 1:
+            if len(self.trajectory.feature_sequence) > 1:
                 self.trajectory.next_features.append(state_description)
+                self.trajectory.next_carry.append(next_carry)
             
         self.kill_switch = self.task.kill_switch
-
         return action
 
     def state_description(self, colloids):

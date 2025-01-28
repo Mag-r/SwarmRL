@@ -10,5 +10,5 @@ from swarmrl.sampling_strategies.continuous_gaussian_distribution import Continu
 __all__ = [
     CategoricalDistribution.__name__,
     GumbelDistribution.__name__,
-    ContinuousGaussianDistribution.__name__,
+    ContinuousGaussianDistribution.__name__, 
 ]

@@ -1,9 +1,13 @@
 # Custom folders
 .idea
 .vscode
+images
+*.out
+*.mp4
 SwarmRL/docs/build
 espresso
 *.pkl
+/position_tracking
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

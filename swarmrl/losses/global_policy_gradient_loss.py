@@ -54,6 +54,7 @@ class GlobalPolicyGradientLoss(Loss):
         feature_data: jnp.ndarray,
         next_feature_data: jnp.ndarray,
         carry: jnp.ndarray,
+        next_carry: jnp.ndarray,
         rewards: jnp.ndarray,
         log_probs: jnp.ndarray,
     ) -> jnp.array:
@@ -82,30 +83,28 @@ class GlobalPolicyGradientLoss(Loss):
         """
 
         # (n_timesteps, n_possibilities)
-        _, predicted_values,_ = network(network_params, feature_data, carry)
-        _, next_predicted_values,_ = network(network_params, next_feature_data, carry)
+        logger.debug(f"{feature_data.shape=}")
+        logger.debug(f"{next_feature_data.shape=}")
+        
+        _, predicted_values, _ = network(network_params, feature_data, carry)
+        _, next_predicted_values, _ = network(network_params, next_feature_data, next_carry)
         predicted_values = predicted_values.squeeze()
         next_predicted_values = next_predicted_values.squeeze()
         logger.debug(f"{log_probs.shape=}")
-
         returns = self.value_function(rewards, next_predicted_values)
-        logger.debug(f"{returns.shape}")
-
-        logger.debug(f"{predicted_values.shape=}")
 
         # (n_timesteps, n_particles)
         advantage = returns - predicted_values
-        # advantage = (advantage - jnp.mean(advantage)) / (jnp.std(advantage) + 1e-8)
 
         logger.info(f"{advantage=}")
         logger.info(f"{log_probs=}")
 
         # Sum over time steps and average over agents.
-        critic_loss =  1.0 * jnp.mean(jnp.square(advantage))
+        critic_loss = 1.0 * jnp.mean(jnp.square(advantage))
         advantage = jax.lax.stop_gradient(advantage)
         actor_loss = - 1.0 * (log_probs * advantage).mean()
 
-        logger.info(f"{critic_loss=}, {actor_loss=}")
+        logger.info(f"{critic_loss=},\n {actor_loss=}")
         self.error_predicted_reward = jnp.abs(advantage)
         return actor_loss + critic_loss
 
@@ -130,6 +129,7 @@ class GlobalPolicyGradientLoss(Loss):
         feature_data = feature_data.reshape((iterations * n_particles, *feature_dimension))
         iterations_next, *_ = next_feature_data.shape
         next_feature_data = next_feature_data.reshape(((iterations_next) * n_particles, *feature_dimension))
+        next_carry_data = jnp.array(episode_data.next_carry)
         carry = episode_data.carry
 
         reward_data = jnp.array(episode_data.rewards)
@@ -143,6 +143,7 @@ class GlobalPolicyGradientLoss(Loss):
             feature_data=feature_data,
             next_feature_data=next_feature_data,
             carry=carry,
+            next_carry=next_carry_data,
             rewards=reward_data,
             log_probs=log_probs,
         )

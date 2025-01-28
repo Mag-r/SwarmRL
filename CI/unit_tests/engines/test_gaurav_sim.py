@@ -45,6 +45,7 @@ class GauravSimTest(ut.TestCase):
                 np.array([0, np.pi / 2]),  # radian
                 Q_(np.array([0, 0]), "mT").m_as("sim_magnetic_field"),
             )
+            print(action)
             model = gaurav_sim.ConstantAction(action)
 
             for _ in tqdm.tqdm(range(10)):

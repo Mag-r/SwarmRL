@@ -116,9 +116,8 @@ class ConstantAction(Model):
         return self.action
 
 
-def calc_B_field(action: MPIAction, t: float):
-    angles = 2 * np.pi * action.frequencies * t + action.phases
-    return action.amplitudes * np.sin(angles) + action.offsets
+def calc_B_field(action: MPIAction):
+    return action.magnetic_field
 
 
 @numba.jit
@@ -236,7 +235,6 @@ class GauravSim(Engine):
             self.capillary_torque = cap_torque
             self.max_cap_distance = cap_distances[-1]
         self.save_h5 = save_h5
-        self.noise = 0.01
         
             
         
@@ -282,7 +280,7 @@ class GauravSim(Engine):
 
         n_rafts = len(self.colloids)
 
-        self.h5_dataset_keys = ["Times", "Ids", "Alphas", "Angular_Velocity", "Unwrapped_Positions","Frequnecies", "Amplitudes", "Offsets", "Phases"]
+        self.h5_dataset_keys = ["Times", "Ids", "Alphas", "Angular_Velocity", "Unwrapped_Positions","Magnetic_field","Time_to_keep"]
 
         # create datasets with 3 dimension regardless of data dimension to make
         # data handling easier later
@@ -332,33 +330,20 @@ class GauravSim(Engine):
                 
             action_group = h5_outfile.require_group("actions")
             action_group.require_dataset(
-                "Amplitudes",
+                "Magnetic_field",
                 shape=(0,2),
                 maxshape=(None,2),
                 dtype=float,
                 **dataset_kwargs,
             )    
             action_group.require_dataset(
-                "Frequencies",
-                shape=(0,2),
-                maxshape=(None,2),
+                "Time_to_keep",
+                shape=(0,1),
+                maxshape=(None,1),
                 dtype=float,
                 **dataset_kwargs,
             )    
-            action_group.require_dataset(
-                "Offsets",
-                shape=(0,2),
-                maxshape=(None,2),
-                dtype=float,
-                **dataset_kwargs,
-            )    
-            action_group.require_dataset(
-                "Phases",
-                shape=(0,2),
-                maxshape=(None,2),
-                dtype=float,
-                **dataset_kwargs,
-            )    
+
 
     def write_to_h5(self, traj_state_flat: np.array, times: np.array, action: MPIAction):
         # traj_state_flat.shape = (n_part*3, n_snapshots)
@@ -380,10 +365,8 @@ class GauravSim(Engine):
             "Unwrapped_Positions": traj_state_h5format[:, :, :2],
         }
         action_chunk = {
-            "Amplitudes": action.amplitudes,
-            "Frequencies": action.frequencies,
-            "Offsets": action.offsets,
-            "Phases": action.phases,
+            "Magnetic_field": action.magnetic_field,
+            "Time_to_keep": action.keep_magnetic_field,
         }
 
         with h5py.File(self.h5_filename, "a") as h5_outfile:
@@ -726,7 +709,7 @@ class GauravSim(Engine):
         state = state_flat.reshape((-1, 3))
         # Apply hard boundary conditions to ensure particles stay within the box
         state[:, :2] = np.clip(state[:, :2], 0, self.params.box_length)
-        b_field = calc_B_field(self.current_action, t)
+        b_field = calc_B_field(self.current_action)
         omega = self._get_omega(state, b_field)
         vel = self._get_vel(state, omega, b_field)
         state_derivative = np.concatenate([vel, omega[:, None]], axis=1)
@@ -735,7 +718,6 @@ class GauravSim(Engine):
         return state_derivative.reshape(-1)
 
     def integrate(self, n_slices: int, model: GlobalForceFunction):
-
         if not self.integration_initialised:
             self.time = 0.0 
             self.slice_idx = 0
@@ -753,7 +735,6 @@ class GauravSim(Engine):
         n_snapshots_per_slice = int(
             round(self.params.time_slice / self.params.snapshot_interval)
         )
-        self.noise = self.noise *0.999
         for i in range(n_slices):
             # Check for a model termination condition.
             # if model.kill_switch:
@@ -762,7 +743,9 @@ class GauravSim(Engine):
                 raise ValueError("Model must be of type GlobalForceFunction")
 
             action_calculation_time = time.time()
-            self.current_action = self.convert_actions_to_sim_units(model.calc_action(self.colloids), self.noise)
+            self.current_action = self.convert_actions_to_sim_units(model.calc_action(self.colloids))
+            self.params.time_slice = self.current_action.keep_magnetic_field
+            self.params.time_step = self.params.time_slice/10
             logger.debug(f"{self.current_action=}")
             integration_start_time = time.time()
             self.old_time = self.time
@@ -770,7 +753,7 @@ class GauravSim(Engine):
                 rhs,
                 (self.time, self.time + self.params.time_slice),
                 state_flat,
-                t_eval=np.linspace(self.time,self.time+self.params.time_slice,2),
+                t_eval=np.linspace(self.time, self.time+self.params.time_slice, 2),
                 method="RK23",
                 first_step=self.params.time_step,
                 max_step=self.params.time_step,
@@ -784,30 +767,18 @@ class GauravSim(Engine):
                     f"Integration crashed at time {self.time}. Reason: {sol.message}"
                 )
             if self.save_h5:
-                self.write_to_h5(sol.y[:,0:1], sol.t[0:1], self.current_action)
+                self.write_to_h5(sol.y[:, 0:1], sol.t[0:1], self.current_action)
                 model.save_agents()
-            logger.debug(f"{(i+1)/n_slices * 100}% completed, \n calc act {integration_start_time- action_calculation_time}, integration {saving_time_start-integration_start_time}, saving {time.time()-saving_time_start}")
-            self.time = self.time+self.params.time_slice#sol.t[-1]
+            logger.debug(f"{(i+1)/n_slices * 100}% completed, \n calc act {integration_start_time - action_calculation_time}, integration {saving_time_start-integration_start_time}, saving {time.time()-saving_time_start}")
+            self.time = self.time+self.params.time_slice  # sol.t[-1]
             state_flat = sol.y[:, -1]
             state = state_flat.reshape((-1, 3))
             state[:, :2] = np.clip(state[:, :2], 0, self.params.box_length)    
             self._update_rafts_from_state(state)
                 
-
-    def convert_actions_to_sim_units(self, action: MPIAction, noise: float = 0.1) -> MPIAction:
+    def convert_actions_to_sim_units(self, action: np.ndarray) -> MPIAction:
         Q_ = self.params.ureg.Quantity
-        
-        amplitudes = np.array(action.amplitudes) + np.random.normal(0,noise,2)
-        frequencies = np.array(action.frequencies) + np.random.normal(0,noise,2)
-        phases = np.array(action.phases) + np.random.normal(0,noise,2)
-        offsets = np.array(action.offsets) + np.random.normal(0,noise,2)
-        
-        return MPIAction(
-            amplitudes=Q_(amplitudes, "cT").m_as("sim_magnetic_field"),
-            frequencies=Q_(frequencies, "hertz").m_as("sim_angular_velocity"),
-            phases=phases,
-            offsets=Q_(offsets, "cT").m_as("sim_magnetic_field"),
-        )
+        return MPIAction(magnetic_field=Q_(action[:2], "cT").m_as("sim_magnetic_field"), keep_magnetic_field=action[2])
 
     def remove_overlapp(self, state):
         for k in range(1,10):

@@ -2,12 +2,12 @@ from abc import ABC
 import logging
 
 import jax
+from jaxlib.xla_extension import XlaRuntimeError
 import jax.numpy as np
 import numpy as onp
-from dataclasses import fields
 
 from swarmrl.sampling_strategies.sampling_strategy import SamplingStrategy
-from swarmrl.actions import MPIAction
+
 
 logger = logging.getLogger(__name__)
 
@@ -15,60 +15,46 @@ logger = logging.getLogger(__name__)
 class ContinuousGaussianDistribution(SamplingStrategy, ABC):
     """
     Class for the continuous Gaussian distribution.
-    TODO: make shorter indentation
     """
 
     def __call__(
-        self, logits: np.ndarray, number_of_gaussians: int, action_dimension: int = 8
-    ) -> tuple[MPIAction, float]:
+        self, logits: np.ndarray, action_dimension: int = 3, calculate_log_probs: bool = False, deploment_mode: bool = False
+    ) -> tuple[np.ndarray, float]:
         """
         Generates an action and its corresponding log probability using a continuous Gaussian distribution.
         Args:
                 logits (np.ndarray): The logits representing the parameters of the Gaussian distribution.
-                number_of_gaussians (int): The number of Gaussians in the distribution.
-                action_dimension (int, optional): The dimensionality of the action. Defaults to 8.
         Returns:
                 tuple[MPIAction, float]: A tuple containing the generated action and its log probability.
         """
-
-        assert np.shape(logits) == (
-            number_of_gaussians * action_dimension * 2 + number_of_gaussians,
-        ), f"Logits must have the shape ({number_of_gaussians*action_dimension*2 + number_of_gaussians},), have {np.shape(logits)}"
+        
+        assert np.shape(logits)[1] == 2 * action_dimension, "Logits must have the shape (x, 2 * action_dimension). Has shape {np.shape(logits)}"
         rng = jax.random.PRNGKey(onp.random.randint(0, 1236534623))
 
-        key, subkey = jax.random.split(rng)
-        # selected_gaussian = jax.random.randint(
-        #     subkey, minval=0, maxval=number_of_gaussians, shape=(1,)
-        # )[0]
-        selected_gaussian = jax.random.choice(
-            subkey, number_of_gaussians, shape=(1,), p=jax.nn.softmax(logits[-number_of_gaussians:])
-        )[0]
-        mean = logits[
-            selected_gaussian
-            * action_dimension : (selected_gaussian + 1)
-            * action_dimension
-        ]
-        cov = np.diag(
-            logits[
-                selected_gaussian
-                * action_dimension + number_of_gaussians * action_dimension: (selected_gaussian + 1)
-                * action_dimension + number_of_gaussians * action_dimension
-            ]
-        )
+        _, subkey = jax.random.split(rng)
+        mean = logits[:, :action_dimension]
+        if deploment_mode:
+            action = mean
+        else:
+            epsilon = 1e-7
+            cov = np.array([np.diag(logits[batch_index, action_dimension:]) + np.eye(action_dimension) * epsilon for batch_index in range(logits.shape[0])])
+            logger.debug(f"{cov=}")
+            logger.debug(f"{mean=}")
+            # assert (
+            #     np.diag(cov) > 0
+            # ).all(), f"Covariance matrix must be positive definite, {np.diag(cov)=}"
+            try:
+                action = jax.random.multivariate_normal(subkey, mean=mean, cov=cov)
+            except XlaRuntimeError as e:
+                logger.warning(f"Mean: {mean}, Cov: {cov}")
+                raise e
+            assert not np.isnan(action).any(), "Action values must not be NaN."
 
-        epsilon = 1e-10
-        cov = epsilon *  np.eye(cov.shape[0])
-        # logger.debug(f"{cov=}")
-        logger.debug(f"{mean=}")
-        assert (np.diag(cov)>0).all(), f"Covariance matrix must be positive definite, {np.diag(cov)=}"
-        action_values = jax.random.multivariate_normal(subkey, mean=mean, cov=cov)
-        assert not np.isnan(
-            action_values
-        ).any(), f"Action values must not be NaN."
-        # print(f"{action_values=}, {mean=}, {cov=}")
-        log_probs = jax.scipy.stats.multivariate_normal.logpdf(
-            action_values, mean=mean, cov=cov
-        ) + np.log(jax.nn.softmax(logits[-number_of_gaussians:])[selected_gaussian])
-        action_values = action_values.reshape((int(action_dimension / 2), -1))
-        action = MPIAction(*action_values)
+        if calculate_log_probs and not deploment_mode:
+            log_probs = jax.scipy.stats.multivariate_normal.logpdf(
+                action, mean=mean, cov=cov
+            )
+        else:
+            log_probs = None
+        action = onp.maximum(action, [0,0,0.1])
         return action, log_probs
