@@ -1,80 +1,150 @@
-import rospy
 import numpy as np
-
-
-from processing_ROS.msg import Coilfreq
-from sensor_msgs.msg import Image
+import pypylon
+from jax import numpy as jnp
+import logging
+import threading
+import socket
+import time
 
 from swarmrl.engine.engine import Engine
 from swarmrl.engine.gaurav_sim import GauravSim
 from swarmrl.force_functions.global_force_fn import GlobalForceFunction
 from swarmrl.actions.mpi_action import MPIAction
 
+logger = logging.getLogger(__name__)
+
 
 class GauravExperiment(Engine):
-    def __init__(self, simulation: GauravSim):
+
+    labview_port = 6340
+    labview_ip = "134.105.56.173"
+    closing_message = "S_Goodbye".encode("utf-8")
+    TDMS_file_name = "H_".encode("utf-8")  # check with Gaurav
+
+    def __init__(self, simulation: GauravSim, update_rate: float = 1.0):
         super().__init__()
         self.simulation = simulation
-        rospy.init_node("srl_controller")
-        self.image_subscriber = rospy.Subscriber("/camera/image", Image, self.image_callback)
-        self.action_publisher = rospy.Publisher("/control", Coilfreq, queue_size=10)
-        self.image = None
+        self.update_rate = update_rate
+        self.labview_listener = None
+        self.labview_publisher = None
+        self.server_connection = None
+        self.keep_publishing = threading.Event()
+        self.publishing_thread = None
+        self.message_to_publish = " "  # Initial message
 
-    def image_callback(self, msg):
-        self.image = np.frombuffer(msg.data).reshape(msg.height, msg.width)
-        self.image = self.image[::4, ::4, np.newaxis]
+        self.establish_connection()
+
+    def establish_connection(self):
+        """Establish TCP connections with LabVIEW"""
+        self.labview_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.labview_publisher = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.labview_listener.settimeout(10)
+
+        try:
+            self.labview_listener.connect((self.labview_ip, self.labview_port))
+            starting_message = self.receive_message()
+
+            if starting_message and "Start" in starting_message:
+                parts = starting_message.split(",")
+                time_ip = parts[1]
+                time_port = int(parts[2])
+
+                # Close listener connection
+                self.labview_listener.sendall(self.closing_message)
+
+                # Start server for publishing
+                self.labview_publisher.settimeout(10)
+                self.labview_publisher.bind((time_ip, time_port))  # Check with Gaurav
+                self.labview_publisher.listen(1)
+
+                self.server_connection, _ = self.labview_publisher.accept()
+                self.server_connection.settimeout(0.001)
+
+                logger.info("Connection established")
+
+                # Send TDMS filename if required
+                self.send_message(self.TDMS_file_name)
+
+                # Start background thread for sending messages
+                self.keep_publishing.set()
+                self.publishing_thread = threading.Thread(
+                    target=self._publish_loop, daemon=True
+                )
+                self.publishing_thread.start()
+
+        except Exception as e:
+            logger.error(f"Error establishing connection: {e}")
+
+    def receive_message(self):
+        """Receive messages from LabVIEW listener."""
+        try:
+            message_length = int(self.labview_listener.recv(8).decode())
+            return self.labview_listener.recv(message_length).decode()
+        except Exception:
+            return None
+
+    def send_message(self, message: str):
+        """Send a message to the LabVIEW publisher."""
+        if self.server_connection:
+            try:
+                msg_bytes = message.encode("utf-8")
+                self.server_connection.sendall(
+                    len(msg_bytes).to_bytes(4, byteorder="big")
+                )
+                self.server_connection.sendall(msg_bytes)
+            except Exception as e:
+                logger.error(f"Error sending message: {e}")
+                self.stop_publishing()
+                
+
+    def update_message(self, new_message: str):
+        """Update the message to be published."""
+        self.message_to_publish = new_message
+
+    def _publish_loop(self):
+        """Continuously send updated messages at the given update rate."""
+        while self.keep_publishing.is_set():
+            start_time = time.time()
+            self.send_message(self.message_to_publish)
+            elapsed_time = time.time() - start_time
+            time.sleep(max(0, (1 / self.update_rate) - elapsed_time))
+
+    def stop_publishing(self):
+        """Stop the publishing thread and close connections."""
+        self.keep_publishing.clear()
+        if self.publishing_thread:
+            self.publishing_thread.join()
+            
+        if self.labview_listener:
+            self.labview_listener.close()
+
+        if self.server_connection:
+            self.send_message(self.closing_message)
+            self.server_connection.close()
 
 
-    def create_action_message(self, action: MPIAction, shutdown: bool = False):
-        #maybe change later
-        message = Coilfreq()
-        action = self.clip_actions(action)
-        message.double_signal = True
-        message.enable_coils = not shutdown # change later
-        message.general_stop = shutdown
-        message.B1 = action.amplitudes[0]
-        message.f1 = action.frequencies[0]
-        
-        message.Bx = 1
-        message.By = action.amplitudes[1]/message.B1
-        message.fx = 1
-        message.fy = action.frequencies[1]/message.f1
-        message.Bx1 = action.offsets[0]/message.B1
-        message.By1 = action.offsets[1]/message.B1
-        return message
-        
+        logger.info("Publishing stopped and connections closed.")
+
+    def send_action(self, action: MPIAction):
+        """Send an action to LabVIEW."""
+        # Convert action to string message and send
+        action_message = (
+            f"M_{action.magnetic_field[0]}_{action.magnetic_field[1]}_{action.keep_magnetic_field}"
+        )
+        self.update_message(action_message)
+
     def clip_actions(self, action: MPIAction, max_amplitude: float = 0.01):
+        """Clip the action values."""
         action.magnetic_field = np.clip(action.magnetic_field, 0, max_amplitude)
         return action
-        
-        
 
-    def integrate(
-        self,
-        n_slices: int,
-        force_model: GlobalForceFunction,
-    ) -> None:
-        """
-        Perform the real-experiment equivalent of an integration step.
-
-        Parameters
-        ----------
-        n_slices : int
-            Number of slices to integrate.
-        force_model : ForceFunction
-            The force model to use for integration.
-        """
+    def integrate(self, n_slices: int, force_model: GlobalForceFunction):
+        """Perform a real-experiment equivalent of an integration step."""
         try:
             for _ in range(n_slices):
-                if self.image is not None:
-                    action = force_model.calc_action(self.image)
-                    action = self.simulation.convert_actions_to_sim_units(action)
-                    message = self.create_action_message(action) 
-                    self.action_publisher.publish(message)   
-                else:
-                    rospy.logwarn("No image received")
-                rospy.sleep(0.1)
+                action = force_model.calc_action(None)
+                action = self.simulation.convert_actions_to_sim_units(action)
+                action = self.clip_actions(action)
+                self.send_action(action)
         finally:
-            message = self.create_action_message(MPIAction(np.zeros(2), 0), shutdown=True)
-            self.action_publisher.publish(message)
-            
+            self.stop_publishing()

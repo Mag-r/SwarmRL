@@ -8,7 +8,7 @@ from numba import cuda
 cuda.select_device(0)
 
 import swarmrl as srl
-from swarmrl.observables.image import ImageObservable
+from swarmrl.observables.basler_camera_MPI import BaslerCameraObservable
 from jax import numpy as np
 import logging
 import flax.linen as setupNetwork
@@ -22,7 +22,7 @@ import os
 import setupNetwork
 from swarmrl.engine.gaurav_experiment import GauravExperiment
 import setupNetwork
-import rospy
+
 
 # %%
 logging.basicConfig(
@@ -38,7 +38,7 @@ number_of_gaussians = 1
 action_dimension = 8
 
 
-obs = ImageObservable(particle_type=0)
+obs = BaslerCameraObservable(particle_type=0)
 task = DummyTask(np.array([10000, 10000, 0]), target=np.array([5000, 5000, 0]))
 print(f"task initialized, with normalization = {task.get_normalization()}", flush=True)
 
