@@ -30,15 +30,14 @@ logging.basicConfig(
     format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s\n",
 )
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-host = "localhost"
-port = 9090
+
 sequence_length = 4
 resolution = 506
 number_of_gaussians = 1
 action_dimension = 8
 
 
-obs = BaslerCameraObservable(particle_type=0)
+obs = BaslerCameraObservable([resolution, resolution])
 task = DummyTask(np.array([10000, 10000, 0]), target=np.array([5000, 5000, 0]))
 print(f"task initialized, with normalization = {task.get_normalization()}", flush=True)
 
