@@ -49,13 +49,16 @@ class BaslerCameraObservable(Observable, ABC):
         self.resolution = resolution
         tlf = pylon.TlFactory.GetInstance()
         detected_cameras = tlf.EnumerateDevices()
+        self.camera = None
+        print(detected_cameras)
         for cam in detected_cameras:
-            if cam.GetSerialNumber() == self.camParam["camName"]:
+            serial_number = cam.GetFriendlyName().split()[-1][1:-1]
+            if serial_number == self.camParam["camName"]:
                 self.camera = pylon.InstantCamera(tlf.CreateDevice(cam))
                 self.init_camera()
                 logger.info(f"Camera {self.camParam['camName']} found and init.")
                 break
-        if not self.camera.IsPylonDeviceAttached():
+        if self.camera is None or not self.camera.IsPylonDeviceAttached():
             logger.error(f"Camera {self.camParam['camName']} not found.")
             raise Exception(f"Camera {self.camParam['camName']} not found.")
     def init_camera(self):
