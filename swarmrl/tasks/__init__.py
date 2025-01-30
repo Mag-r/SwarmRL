@@ -6,6 +6,7 @@ from swarmrl.tasks import object_movement, searching
 from swarmrl.tasks.multi_tasking import MultiTasking
 from swarmrl.tasks.task import Task
 from swarmrl.tasks.dummy_task import DummyTask
+from swarmrl.tasks.experiment_task import ExperimentTask
 
 __all__ = [
     searching.__name__,
@@ -13,4 +14,5 @@ __all__ = [
     Task.__name__,
     MultiTasking.__name__,
     DummyTask.__name__,
+    ExperimentTask.__name__,
 ]

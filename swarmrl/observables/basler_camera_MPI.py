@@ -10,6 +10,7 @@ import numpy as onp
 import cv2
 from pypylon import pylon
 import logging
+from matplotlib import pyplot as plt
 
 from swarmrl.observables.observable import Observable
 
@@ -50,7 +51,7 @@ class BaslerCameraObservable(Observable, ABC):
         tlf = pylon.TlFactory.GetInstance()
         detected_cameras = tlf.EnumerateDevices()
         self.camera = None
-        print(detected_cameras)
+        self.image_count = 0
         for cam in detected_cameras:
             serial_number = cam.GetFriendlyName().split()[-1][1:-1]
             if serial_number == self.camParam["camName"]:
@@ -84,7 +85,7 @@ class BaslerCameraObservable(Observable, ABC):
             self.camera.BalanceRatio.SetValue(self.camParam['balanceRatio_g'])
             self.camera.BalanceRatioSelector.SetValue(self.camParam['balanceRatioSelector_b'])
             self.camera.BalanceRatio.SetValue(self.camParam['balanceRatio_b'])
-        self.camera.Close()
+        self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
         
 
     def compute_observable(self, colloids: np.ndarray) -> np.ndarray:
@@ -96,17 +97,20 @@ class BaslerCameraObservable(Observable, ABC):
         """
         if colloids is not None:
             raise ValueError("Colloids should be None for this observable.")
-        self.camera.Open()
-        self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
         if self.camera.IsGrabbing():
             grabResult = self.camera.RetrieveResult(5000, pylon.TimeoutHandling_ThrowException)
             if grabResult.GrabSucceeded():
                 image = grabResult.GetArray()
-                image = cv2.cvtColor(image, cv2.COLOR_BG2GRAY) # not BGR2GRAY?
+                image = cv2.cvtColor(image, cv2.COLOR_BAYER_BG2GRAY)
+                
                 image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
                 grabResult.Release()
             else:
                 logger.error("Grab failed.")
                 image = np.zeros(self.resolution)
-        image = np.array(image[:, :, np.newaxis])
+        plt.imshow(image,cmap='gray')
+        plt.axis('off')
+        plt.savefig(f'images/top_down_image_{self.image_count:03d}.png')
+        self.image_count = self.image_count + 1
+        image = np.array(image[np.newaxis, :, :, np.newaxis])
         return image

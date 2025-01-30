@@ -58,7 +58,7 @@ params = GauravSimParams(
             lubrication_threshold=Q_(15, "micrometer"),
             magnetic_constant=Q_(4 * np.pi * 1e-7, "newton /ampere**2"),
             capillary_force_data_path=pathlib.Path(
-                "/work/clohrmann/mpi_collab/capillaryForceAndTorque_sym6"
+                "/home/gardi/Downloads/spinning_rafts_sim2/2019-05-13_capillaryForceCalculations-sym6/capillaryForceAndTorque_sym6"
             ),
         )
 
