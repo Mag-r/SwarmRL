@@ -18,7 +18,7 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
     """
 
     def __call__(
-        self, logits: np.ndarray, action_dimension: int = 3, calculate_log_probs: bool = False, deploment_mode: bool = False
+        self, logits: np.ndarray, action_dimension: int = 3, calculate_log_probs: bool = False, deployment_mode: bool = False
     ) -> tuple[np.ndarray, float]:
         """
         Generates an action and its corresponding log probability using a continuous Gaussian distribution.
@@ -28,12 +28,12 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
                 tuple[MPIAction, float]: A tuple containing the generated action and its log probability.
         """
         
-        assert np.shape(logits)[1] == 2 * action_dimension, "Logits must have the shape (x, 2 * action_dimension). Has shape {np.shape(logits)}"
+        assert np.shape(logits)[1] == 2 * action_dimension, f"Logits must have the shape (x, 2 * action_dimension). Has shape {np.shape(logits)}"
         rng = jax.random.PRNGKey(onp.random.randint(0, 1236534623))
 
         _, subkey = jax.random.split(rng)
         mean = logits[:, :action_dimension]
-        if deploment_mode:
+        if deployment_mode:
             action = mean
         else:
             epsilon = 1e-7
@@ -50,11 +50,12 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
                 raise e
             assert not np.isnan(action).any(), "Action values must not be NaN."
 
-        if calculate_log_probs and not deploment_mode:
+        if calculate_log_probs and not deployment_mode:
             log_probs = jax.scipy.stats.multivariate_normal.logpdf(
                 action, mean=mean, cov=cov
             )
         else:
             log_probs = None
         action = onp.maximum(action, [0,0,0.1])
+        action = onp.minimum(action, [1,1,10])
         return action, log_probs

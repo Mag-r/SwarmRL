@@ -778,7 +778,7 @@ class GauravSim(Engine):
                 
     def convert_actions_to_sim_units(self, action: np.ndarray) -> MPIAction:
         Q_ = self.params.ureg.Quantity
-        return MPIAction(magnetic_field=Q_(action[:2], "cT").m_as("sim_magnetic_field"), keep_magnetic_field=action[2])
+        return MPIAction(magnetic_field=Q_(action[:2], "mT").m_as("sim_magnetic_field"), keep_magnetic_field=action[2])
 
     def remove_overlapp(self, state):
         for k in range(1,10):

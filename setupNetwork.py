@@ -55,7 +55,10 @@ class ActoCriticNet(nn.Module):
         actor = nn.Dense(features=12, name="Actor_2")(actor)
         actor = nn.relu(actor)
         actor = nn.Dense(features=action_dimension * 2, name="Actor_3")(actor)
-        actor = nn.relu(actor)
+        # actor.at[:2].set(jnp.tanh(actor.at[:2].get()))
+        actor = actor.at[:,:2].set(jnp.tanh(actor.at[:,:2].get()/2.0 + 0.5)) # range 0-1
+        actor = actor.at[:,2].set(actor.at[:,2].get() + 1.0)
+        actor = actor.at[:,3:].set(jnp.log(1+jnp.exp(actor.at[:,3:].get())))
         if action is not None:
             x = jnp.concatenate([x, action], axis=-1)
             q_1 = nn.Dense(features=12)(x)
