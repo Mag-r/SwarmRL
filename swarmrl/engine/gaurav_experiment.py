@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6340
+    labview_port = 6342
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  # check with Gaurav
@@ -31,7 +31,7 @@ class GauravExperiment(Engine):
         self.keep_publishing = threading.Event()
         self.publishing_thread = None
         self.message_to_publish = " "  # Initial message
-
+        self.colloids = None
         self.establish_connection()
 
     def establish_connection(self):
@@ -40,40 +40,33 @@ class GauravExperiment(Engine):
         self.labview_publisher = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.labview_listener.settimeout(10)
 
-        try:
-            self.labview_listener.connect((self.labview_ip, self.labview_port))
-            starting_message = self.receive_message()
+        self.labview_listener.connect((self.labview_ip, self.labview_port))
+        starting_message = self.receive_message()
 
-            if starting_message and "Start" in starting_message:
-                parts = starting_message.split(",")
-                time_ip = parts[1]
-                time_port = int(parts[2])
+        if starting_message and "Start" in starting_message:
+            parts = starting_message.split(",")
+            time_port = int(parts[2])
+            # Close listener connection
+            self.labview_listener.sendall(self.closing_message)
+            # Start server for publishing
+            self.labview_publisher.settimeout(10)
+            self.labview_publisher.bind(('', time_port))
+            self.labview_publisher.listen(1)
 
-                # Close listener connection
-                self.labview_listener.sendall(self.closing_message)
+            self.server_connection, _ = self.labview_publisher.accept()
+            self.server_connection.settimeout(0.001)
 
-                # Start server for publishing
-                self.labview_publisher.settimeout(10)
-                self.labview_publisher.bind((time_ip, time_port))  # Check with Gaurav
-                self.labview_publisher.listen(1)
+            logger.info("Connection established")
 
-                self.server_connection, _ = self.labview_publisher.accept()
-                self.server_connection.settimeout(0.001)
+            # Send TDMS filename if required
+            self.send_message(self.TDMS_file_name)
 
-                logger.info("Connection established")
-
-                # Send TDMS filename if required
-                self.send_message(self.TDMS_file_name)
-
-                # Start background thread for sending messages
-                self.keep_publishing.set()
-                self.publishing_thread = threading.Thread(
-                    target=self._publish_loop, daemon=True
-                )
-                self.publishing_thread.start()
-
-        except Exception as e:
-            logger.error(f"Error establishing connection: {e}")
+            # Start background thread for sending messages
+            self.keep_publishing.set()
+            self.publishing_thread = threading.Thread(
+                target=self._publish_loop, daemon=True
+            )
+            self.publishing_thread.start()
 
     def receive_message(self):
         """Receive messages from LabVIEW listener."""
@@ -85,18 +78,19 @@ class GauravExperiment(Engine):
 
     def send_message(self, message: str):
         """Send a message to the LabVIEW publisher."""
+        if not isinstance(message, bytes):
+            message = message.encode("utf-8")
         if self.server_connection:
             try:
-                msg_bytes = message.encode("utf-8")
                 self.server_connection.sendall(
-                    len(msg_bytes).to_bytes(4, byteorder="big")
+                    len(message).to_bytes(4, byteorder="big")
                 )
-                self.server_connection.sendall(msg_bytes)
+                self.server_connection.sendall(message)
             except Exception as e:
                 logger.error(f"Error sending message: {e}")
-                self.stop_publishing()
+                if message != self.closing_message:
+                    self.stop_publishing() 
                 
-
     def update_message(self, new_message: str):
         """Update the message to be published."""
         self.message_to_publish = new_message
@@ -107,6 +101,7 @@ class GauravExperiment(Engine):
             start_time = time.time()
             self.send_message(self.message_to_publish)
             elapsed_time = time.time() - start_time
+            self.message_to_publish = "R_{:.6f}".format(time.time()).encode("utf-8")
             time.sleep(max(0, (1 / self.update_rate) - elapsed_time))
 
     def stop_publishing(self):
@@ -122,18 +117,18 @@ class GauravExperiment(Engine):
             self.send_message(self.closing_message)
             self.server_connection.close()
 
-
         logger.info("Publishing stopped and connections closed.")
 
     def send_action(self, action: MPIAction):
         """Send an action to LabVIEW."""
         # Convert action to string message and send
+        
         action_message = (
-            f"M_{action.magnetic_field[0]}_{action.magnetic_field[1]}_{action.keep_magnetic_field}"
+            f"M_0.0_{action.magnetic_field[0]}_{action.magnetic_field[1]}_{action.keep_magnetic_field}"
         )
         self.update_message(action_message)
 
-    def clip_actions(self, action: MPIAction, max_amplitude: float = 0.01):
+    def clip_actions(self, action: MPIAction, max_amplitude: float = 100):
         """Clip the action values."""
         action.magnetic_field = np.clip(action.magnetic_field, 0, max_amplitude)
         return action
@@ -143,8 +138,8 @@ class GauravExperiment(Engine):
         try:
             for _ in range(n_slices):
                 action = force_model.calc_action(None)
-                action = self.simulation.convert_actions_to_sim_units(action)
                 action = self.clip_actions(action)
                 self.send_action(action)
         finally:
+            logger.info("Terminating.")
             self.stop_publishing()

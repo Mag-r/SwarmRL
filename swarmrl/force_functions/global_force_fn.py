@@ -69,7 +69,7 @@ class GlobalForceFunction:
                 Flag capable of ending simulation.
         """
         # Prepare the data storage.
-        action=[]
+        action = []
         switches = []
         for agent in self.agents:
             action = self.agents[agent].calc_action(colloids=colloids)
@@ -77,7 +77,6 @@ class GlobalForceFunction:
 
         self.kill_switch = any(switches)
         return action
-    
     
     def save_agents(self, directory: str = "Models"):
         """

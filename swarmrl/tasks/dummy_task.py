@@ -51,4 +51,4 @@ class DummyTask(Task):
         return mean_squared_spin/(2*np.pi)
     
     def __call__(self, colloids: list) -> float:
-        return self.distance_reward(colloids) 
+        return self.distance_reward(colloids) / self.normalization_distance

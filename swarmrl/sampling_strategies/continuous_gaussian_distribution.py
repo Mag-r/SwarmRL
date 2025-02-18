@@ -1,13 +1,12 @@
-from abc import ABC
 import logging
+from abc import ABC
 
 import jax
-from jaxlib.xla_extension import XlaRuntimeError
 import jax.numpy as np
 import numpy as onp
+from jaxlib.xla_extension import XlaRuntimeError
 
 from swarmrl.sampling_strategies.sampling_strategy import SamplingStrategy
-
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +17,11 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
     """
 
     def __call__(
-        self, logits: np.ndarray, action_dimension: int = 3, calculate_log_probs: bool = False, deployment_mode: bool = False
+        self,
+        logits: np.ndarray,
+        action_dimension: int = 3,
+        calculate_log_probs: bool = False,
+        deployment_mode: bool = False,
     ) -> tuple[np.ndarray, float]:
         """
         Generates an action and its corresponding log probability using a continuous Gaussian distribution.
@@ -27,8 +30,10 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
         Returns:
                 tuple[MPIAction, float]: A tuple containing the generated action and its log probability.
         """
-        
-        assert np.shape(logits)[1] == 2 * action_dimension, f"Logits must have the shape (x, 2 * action_dimension). Has shape {np.shape(logits)}"
+
+        assert (
+            np.shape(logits)[1] == 2 * action_dimension
+        ), f"Logits must have the shape (x, 2 * action_dimension). Has shape {np.shape(logits)}"
         rng = jax.random.PRNGKey(onp.random.randint(0, 1236534623))
 
         _, subkey = jax.random.split(rng)
@@ -37,7 +42,13 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             action = mean
         else:
             epsilon = 1e-7
-            cov = np.array([np.diag(logits[batch_index, action_dimension:]) + np.eye(action_dimension) * epsilon for batch_index in range(logits.shape[0])])
+            cov = np.array(
+                [
+                    np.diag(logits[batch_index, action_dimension:])/10
+                    + np.eye(action_dimension) * epsilon
+                    for batch_index in range(logits.shape[0])
+                ]
+            )
             logger.debug(f"{cov=}")
             logger.debug(f"{mean=}")
             # assert (
@@ -45,6 +56,8 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             # ).all(), f"Covariance matrix must be positive definite, {np.diag(cov)=}"
             try:
                 action = jax.random.multivariate_normal(subkey, mean=mean, cov=cov)
+                action = onp.maximum(action, [0, 0, 0.1])
+                action = onp.minimum(action, [100, 100, 10])
             except XlaRuntimeError as e:
                 logger.warning(f"Mean: {mean}, Cov: {cov}")
                 raise e
@@ -56,6 +69,5 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             )
         else:
             log_probs = None
-        action = onp.maximum(action, [0,0,0.1])
-        action = onp.minimum(action, [1,1,10])
+
         return action, log_probs

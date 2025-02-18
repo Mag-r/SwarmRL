@@ -25,9 +25,9 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(filename)s - %(levelname)s - %(message)s\n'
 )
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-N_part = 10
-resolution = 506
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+N_part = 3
+resolution = 112
 rafts = o3d.io.read_triangle_mesh("modified_raft.ply")
 
 logger.info("Initializing observables and tasks")
@@ -38,12 +38,12 @@ obs = TopDownImage(
 # task = DummyTask(np.array([10000,10000,0]),target= np.array([5000,5000,0]))
 # print(f"task initialized, with normalization = {task.get_normalization()}", flush=True)
 
-task = ChainTask(np.array([10000,10000,0]))
+task = ChainTask(np.array([10000 ,10000 ,0]))
 
 # %%
 ureg = pint.UnitRegistry()
 Q_ = ureg.Quantity
-
+ureg.define("Gauss = 1e-4 * tesla = G")
 # Define parameters in SI units
 params = GauravSimParams(
             ureg=ureg,
@@ -61,6 +61,7 @@ params = GauravSimParams(
                 "/work/clohrmann/mpi_collab/capillaryForceAndTorque_sym6"
             ),
         )
+#/home/gardi/Downloads/spinning_rafts_sim2/2019-05-13_capillaryForceCalculations-sym6
 
 # Initialize the simulation system
 system_runner = GauravSim(params=params, out_folder="./", with_precalc_capillary=True,save_h5=True)
@@ -70,7 +71,7 @@ for i in range(N_part):
 
 
 # %%
-protocol = setupNetwork.defineRLAgent(obs, task, 0.003)
+protocol = setupNetwork.defineRLAgent(obs, task, 0.03)
 
 # protocol.restore_agent()
 rl_trainer = Trainer([protocol])

@@ -140,7 +140,7 @@ class TopDownImage(Observable, ABC):
         image=self.rgb2gray(np.asarray(image))
         image = np.asarray(image)
         if self.save_images:
-            plt.imshow(image,cmap='gray')
+            plt.imshow(image ,cmap='gray')
             plt.axis('off')
             plt.savefig(f'images/top_down_image_{self.image_count:03d}.png')
             np.savetxt(f'images/top_down_image_{self.image_count:03d}.txt', image)

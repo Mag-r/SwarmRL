@@ -75,4 +75,4 @@ class ChainTask(Task):
             return 0
         reward  = regression_error - self.old_residual
         self.old_residual = regression_error
-        return -reward - self.spinning_reward(colloids)
+        return -reward  #- self.spinning_reward(colloids)

@@ -19,7 +19,9 @@ from optax._src.base import GradientTransformation
 from swarmrl.exploration_policies.exploration_policy import ExplorationPolicy
 from swarmrl.exploration_policies.random_exploration import RandomExploration
 from swarmrl.networks.network import Network
-from swarmrl.sampling_strategies.continuous_gaussian_distribution import ContinuousGaussianDistribution
+from swarmrl.sampling_strategies.continuous_gaussian_distribution import (
+    ContinuousGaussianDistribution,
+)
 from swarmrl.sampling_strategies.sampling_strategy import SamplingStrategy
 from swarmrl.actions import MPIAction
 
@@ -71,7 +73,9 @@ class ContinuousActionModel(Network, ABC):
         self.sampling_strategy = sampling_strategy
         self.model = flax_model
 
-        self.apply_fn = self.model.apply #jax.jit(jax.vmap(self.model.apply, in_axes=(None, 0, 0, 0)))
+        self.apply_fn = (
+            self.model.apply
+        )  # jax.jit(jax.vmap(self.model.apply, in_axes=(None, 0, 0, 0)))
         self.input_shape = input_shape
         self.model_state = None
         self.action_dimension = action_dimension
@@ -108,16 +112,29 @@ class ContinuousActionModel(Network, ABC):
                 initial state of model to then be trained.
                 If you have multiple optimizers, this will create a custom train state.
         """
-        params = self.model.init(init_rng, np.ones(list(self.input_shape)), np.ones(list([self.input_shape[0], self.action_dimension])))["params"]
+        params = self.model.init(
+            init_rng,
+            np.ones(list(self.input_shape)),
+            np.ones(
+                list([self.input_shape[0], self.sequence_length, self.action_dimension])
+            ),
+            np.ones(list([self.input_shape[0], self.action_dimension])),
+        )["params"]
         model_summary = self.model.tabulate(
             jax.random.PRNGKey(1),
             np.ones(list(self.input_shape)),
+            np.ones(
+                list([self.input_shape[0], self.sequence_length, self.action_dimension])
+            ),
             np.ones(list([self.input_shape[0], self.action_dimension])),
         )
         print(model_summary)
         *_, self.carry = self.model.apply(
             {"params": params},
             np.ones(list(self.input_shape)),
+            np.ones(
+                list([self.input_shape[0], self.sequence_length, self.action_dimension])
+            ),
             np.ones(list([self.input_shape[0], self.action_dimension])),
             self.carry,
         )
@@ -129,7 +146,7 @@ class ContinuousActionModel(Network, ABC):
 
             return CustomTrainState.create(
                 apply_fn=self.model.apply, params=params, tx=self.optimizer
-            ) 
+            )
         else:
             return TrainState.create(
                 apply_fn=self.model.apply, params=params, tx=self.optimizer
@@ -165,7 +182,12 @@ class ContinuousActionModel(Network, ABC):
         logger.debug(f"Model updated")
         self.epoch_count += 1
 
-    def compute_action_training(self, observables: np.ndarray, carry: np.ndarray = None):
+    def compute_action_training(
+        self,
+        observables: np.ndarray,
+        previous_actions: np.ndarray,
+        carry: np.ndarray = None,
+    ):
         """
         Compute and action from the action space.
 
@@ -186,32 +208,63 @@ class ContinuousActionModel(Network, ABC):
         """
         try:
             logits, _, _, _ = self.apply_fn(
-                {"params": self.model_state.params}, np.array(observables), None, carry
+                {"params": self.model_state.params},
+                np.array(observables),
+                np.array(previous_actions),
+                None,
+                carry,
             )
         except AttributeError:  # We need this for loaded models.
             logits, _, _, _ = self.apply_fn(
-                {"params": self.model_state["params"]}, np.array(observables), None, carry
+                {"params": self.model_state["params"]},
+                np.array(observables),
+                np.array(previous_actions),
+                None,
+                carry,
             )
-        action, log_probs = self.sampling_strategy(logits, self.action_dimension, calculate_log_probs=True)
+        action, log_probs = self.sampling_strategy(
+            logits, self.action_dimension, calculate_log_probs=True
+        )
         return action, log_probs
 
-    def compute_action(self, observables):        
+    def compute_action(self, observables, previous_actions):
         try:
             logits, _, _, self.carry = self.apply_fn(
-                {"params": self.model_state.params}, np.array(observables), None, self.carry
+                {"params": self.model_state.params},
+                np.array(observables),
+                np.array(previous_actions),
+                None,
+                self.carry,
             )
         except AttributeError:
             logits, _, _, self.carry = self.apply_fn(
-                {"params": self.model_state["params"]}, np.array(observables), None, self.carry
+                {"params": self.model_state["params"]},
+                np.array(observables),
+                np.array(previous_actions),
+                None,
+                self.carry,
             )
-        self.carry = np.array([self.carry[0][np.shape(observables)[0]-1], self.carry[1][np.shape(observables)[0]-1]])
+        self.carry = np.array(
+            [
+                self.carry[0][np.shape(observables)[0] - 1],
+                self.carry[1][np.shape(observables)[0] - 1],
+            ]
+        )
         self.carry = tuple(np.expand_dims(self.carry, axis=1))
         logits = logits.squeeze()
-        action, _ = self.sampling_strategy(logits[np.newaxis,:], self.action_dimension, calculate_log_probs=False)
+        action, _ = self.sampling_strategy(
+            logits[np.newaxis, :], self.action_dimension, calculate_log_probs=False
+        )
 
         return action
 
-    def compute_q_values(self, observables: np.ndarray, actions: np.ndarray, carry: np.ndarray):
+    def compute_q_values(
+        self,
+        observables: np.ndarray,
+        actions: np.ndarray,
+        previous_actions: np.ndarray,
+        carry: np.ndarray,
+    ):
         """
         Compute the q-value of the network.
 
@@ -234,11 +287,19 @@ class ContinuousActionModel(Network, ABC):
         """
         try:
             _, first_q_values, second_q_values, _ = self.apply_fn(
-                {"params": self.model_state.params}, np.array(observables), np.array(actions), carry
+                {"params": self.model_state.params},
+                np.array(observables),
+                np.array(previous_actions),
+                np.array(actions),
+                carry,
             )
         except AttributeError:
             _, first_q_values, second_q_values, _ = self.apply_fn(
-                {"params": self.model_state["params"]}, np.array(observables), np.array(actions), carry
+                {"params": self.model_state["params"]},
+                np.array(observables),
+                np.array(previous_actions),
+                np.array(actions),
+                carry,
             )
 
         return first_q_values, second_q_values

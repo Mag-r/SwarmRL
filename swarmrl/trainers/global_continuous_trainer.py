@@ -50,6 +50,8 @@ class GlobalContinuousTrainer(Trainer):
                 ag_reward, ag_killed = agent.update_agent()
                 reward += np.mean(ag_reward)
                 switches.append(ag_killed)
+            else:
+                raise NotImplementedError("Only MPIActorCriticAgent is supported.")
 
         # Create a new interaction model.
         interaction_model = GlobalForceFunction(agents=self.agents)
@@ -83,7 +85,7 @@ class GlobalContinuousTrainer(Trainer):
         episode = 0
         force_fn = self.initialize_training()
 
-        # Initialize the tasks and observables.
+        # Initialize the tasks and observables. 
         for agent in self.agents.values():
             agent.reset_agent(self.engine.colloids)
 

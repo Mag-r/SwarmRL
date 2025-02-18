@@ -13,6 +13,7 @@ from jax import numpy as np
 import logging
 import flax.linen as setupNetwork
 from swarmrl.tasks.dummy_task import DummyTask
+from swarmrl.tasks.experiment_task import ExperimentTask
 from swarmrl.engine.gaurav_sim import *
 from swarmrl.trainers.global_continuous_trainer import (
     GlobalContinuousTrainer as Trainer,
@@ -38,9 +39,9 @@ action_dimension = 8
 
 
 obs = BaslerCameraObservable([resolution, resolution])
-task = DummyTask(np.array([10000, 10000, 0]), target=np.array([5000, 5000, 0]))
-print(f"task initialized, with normalization = {task.get_normalization()}", flush=True)
-
+#task = DummyTask(np.array([10000, 10000, 0]), target=np.array([5000, 5000, 0]))
+#print(f"task initialized, with normalization = {task.get_normalization()}", flush=True)
+task = ExperimentTask()
 
 # %%
 ureg = pint.UnitRegistry()
@@ -60,7 +61,7 @@ params = GauravSimParams(
     lubrication_threshold=Q_(15, "micrometer"),
     magnetic_constant=Q_(4 * np.pi * 1e-7, "newton /ampere**2"),
     capillary_force_data_path=pathlib.Path(
-        "/work/clohrmann/mpi_collab/capillaryForceAndTorque_sym6"
+        "/home/gardi/Downloads/spinning_rafts_sim2/2019-05-13_capillaryForceCalculations-sym6/capillaryForceAndTorque_sym6"
     ),
 )
 
@@ -77,5 +78,5 @@ protocol = setupNetwork.defineRLAgent(obs, task, 0.0)
 # protocol.restore_agent()
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
-reward = rl_trainer.perform_rl_training(experiment, 10000, 10)
+reward = rl_trainer.perform_rl_training(experiment, 10000, 100000)
 

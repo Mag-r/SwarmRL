@@ -53,7 +53,7 @@ class TDReturnsSAC:
         """
         logger.debug(f"{self.gamma=}")
         expected_returns = np.zeros_like(rewards)
-        logger.info(f"{rewards=}")
+        logger.debug(f"{rewards=}")
         expected_future_rewards = q_value - temperature * next_log_probs
         if np.shape(expected_future_rewards) != np.shape(expected_returns):
                 expected_future_rewards = np.append(expected_future_rewards, 0)

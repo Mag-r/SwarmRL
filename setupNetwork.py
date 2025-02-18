@@ -5,7 +5,7 @@ import optax
 from jax import numpy as jnp
 
 action_dimension = 3
-resolution = 506
+resolution = 112
 sequence_length = 4
 
 class ActoCriticNet(nn.Module):
@@ -16,26 +16,22 @@ class ActoCriticNet(nn.Module):
     def setup(self):
         # Define a scanned LSTM cell
         self.ScanLSTM = nn.scan(
-            nn.ConvLSTMCell,
+            nn.OptimizedLSTMCell,
             variable_broadcast="params",
             split_rngs={"params": False},
             in_axes=1,
             out_axes=1,
         )
-        self.lstm = self.ScanLSTM(features=12, kernel_size=(3, 3))
+        self.lstm = self.ScanLSTM(features=12)
 
     @nn.remat
     @nn.compact
-    def __call__(self, x, action, carry=None):
-        batch_size = x.shape[0]
-        # Initialize carry if it's not provided
-        if carry is None:
-            carry = self.lstm.initialize_carry(jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:])
-            print("Action: new carry initialized")
-        carry, memory = self.lstm(carry, x)
+    def __call__(self, x, previous_actions, action, carry=None):
+        batch_size, sequence_length = x.shape[0], x.shape[1]
 
-        # Apply relu activation to the LSTM output (memory)
-        x = nn.relu(memory)
+        x = nn.Conv(features=12, kernel_size=(3, 3), strides=(3, 3))(x)
+        x = nn.relu(x)
+
         x = nn.Conv(features=12, kernel_size=(3, 3), strides=(3, 3))(x)
         x = nn.relu(x)
 
@@ -46,19 +42,26 @@ class ActoCriticNet(nn.Module):
         x = nn.Conv(features=12, kernel_size=(3, 3), strides=(2, 2))(x)
         x = nn.relu(x)
 
-        x = x.reshape((batch_size, -1))
+        x = x.reshape((batch_size, sequence_length, -1))
         x = nn.Dense(features=12)(x)
         x = nn.relu(x)
-        # x = nn.LayerNorm()(x)
+        x = jnp.concatenate([x, previous_actions], axis=-1)
+        # Initialize carry if it's not provided
+        if carry is None:
+            carry = self.lstm.initialize_carry(jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:])
+            print("Action Net: new carry initialized")
+        carry, x = self.lstm(carry, x)
+        x = x.reshape((batch_size, -1))
+        
         actor = nn.Dense(features=12, name="Actor_1")(x)
         actor = nn.relu(actor)
         actor = nn.Dense(features=12, name="Actor_2")(actor)
         actor = nn.relu(actor)
         actor = nn.Dense(features=action_dimension * 2, name="Actor_3")(actor)
-        # actor.at[:2].set(jnp.tanh(actor.at[:2].get()))
-        actor = actor.at[:,:2].set(jnp.tanh(actor.at[:,:2].get()/2.0 + 0.5)) # range 0-1
-        actor = actor.at[:,2].set(actor.at[:,2].get() + 1.0)
+        actor = actor.at[:,:2].set(jnp.tanh(actor.at[:,:2].get()/2.0 + 0.5)) * 100  # range 0-100 gauss
+        actor = actor.at[:,2].set(jnp.tanh(actor.at[:,2].get()/2.0 + 0.5)) * 2  # range 0-2 seconds
         actor = actor.at[:,3:].set(jnp.log(1+jnp.exp(actor.at[:,3:].get())))
+        
         if action is not None:
             x = jnp.concatenate([x, action], axis=-1)
             q_1 = nn.Dense(features=12)(x)
@@ -83,29 +86,23 @@ class TargetNet(nn.Module):
     def setup(self):
         # Define a scanned LSTM cell
         self.ScanLSTM = nn.scan(
-            nn.ConvLSTMCell,
+            nn.OptimizedLSTMCell,
             variable_broadcast="params",
             split_rngs={"params": False},
             in_axes=1,
             out_axes=1,
         )
-        self.lstm = self.ScanLSTM(features=12, kernel_size=(3, 3))
+        self.lstm = self.ScanLSTM(features=12)
 
     @nn.remat
     @nn.compact
-    def __call__(self, x, action, carry = None):
-        batch_size = x.shape[0]
+    def __call__(self, x, previous_actions, action, carry=None):
+        batch_size, sequence_length = x.shape[0], x.shape[1]
 
-        # Initialize carry if it's not provided
-        if carry is None:
-            carry = self.lstm.initialize_carry(
-                jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
-            )
-            print("Target: new carry initialized")
-        carry, memory = self.lstm(carry, x)
-
-        # Apply relu activation to the LSTM output (memory)
-        x = nn.relu(memory)
+        x = nn.Conv(features=12, kernel_size=(3, 3), strides=(3, 3))(x)
+        x = nn.relu(x)
+        
+        x = nn.relu(x)
         x = nn.Conv(features=12, kernel_size=(3, 3), strides=(3, 3))(x)
         x = nn.relu(x)
 
@@ -116,12 +113,18 @@ class TargetNet(nn.Module):
         x = nn.Conv(features=12, kernel_size=(3, 3), strides=(2, 2))(x)
         x = nn.relu(x)
 
-        x = x.reshape((batch_size, -1))
-
+        x = x.reshape((batch_size, sequence_length, -1))
         x = nn.Dense(features=12)(x)
         x = nn.relu(x)
-
+        x = jnp.concatenate([x, previous_actions], axis=-1)
+        # Initialize carry if it's not provided
+        if carry is None:
+            carry = self.lstm.initialize_carry(jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:])
+            print("Action Net: new carry initialized")
+        carry, x = self.lstm(carry, x)
+        x = x.reshape((batch_size, -1))
         x = jnp.concatenate([x, action], axis=-1)
+
         q_1 = nn.Dense(features=12)(x)
         q_2 = nn.Dense(features=12)(x)
         q_1 = nn.relu(q_1)

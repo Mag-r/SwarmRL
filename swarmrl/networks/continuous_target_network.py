@@ -16,12 +16,14 @@ from flax.core.frozen_dict import FrozenDict
 from flax.training.train_state import TrainState
 from optax._src.base import GradientTransformation
 
+from swarmrl.actions import MPIAction
 from swarmrl.exploration_policies.exploration_policy import ExplorationPolicy
 from swarmrl.exploration_policies.random_exploration import RandomExploration
 from swarmrl.networks.network import Network
-from swarmrl.sampling_strategies.continuous_gaussian_distribution import ContinuousGaussianDistribution
+from swarmrl.sampling_strategies.continuous_gaussian_distribution import (
+    ContinuousGaussianDistribution,
+)
 from swarmrl.sampling_strategies.sampling_strategy import SamplingStrategy
-from swarmrl.actions import MPIAction
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +73,9 @@ class ContinuousTargetModel(Network, ABC):
         self.sampling_strategy = sampling_strategy
         self.model = flax_model
 
-        self.apply_fn = self.model.apply #jax.jit(jax.vmap(self.model.apply, in_axes=(None, 0, 0, None))) #erstes argument nicht; zwweites in erster ache, drittes nicht
+        self.apply_fn = (
+            self.model.apply
+        )  # jax.jit(jax.vmap(self.model.apply, in_axes=(None, 0, 0, None))) #erstes argument nicht; zwweites in erster ache, drittes nicht
         self.input_shape = input_shape
         self.model_state = None
         self.action_dimension = action_dimension
@@ -111,14 +115,32 @@ class ContinuousTargetModel(Network, ABC):
         params = self.model.init(
             init_rng,
             np.ones(list(self.input_shape)),
+            np.ones(
+                list([self.input_shape[0], self.sequence_length, self.action_dimension])
+            ),
             np.ones(list([self.input_shape[0], self.action_dimension])),
         )["params"]
         model_summary = self.model.tabulate(
             jax.random.PRNGKey(1),
             np.ones(list(self.input_shape)),
+            np.ones(
+                list([self.input_shape[0], self.sequence_length, self.action_dimension])
+            ),
             np.ones(list([self.input_shape[0], self.action_dimension])),
         )
         print(model_summary)
+        *_, self.carry = self.model.apply(
+            {"params": params},
+            np.ones(list(self.input_shape)),
+            np.ones(
+                list([self.input_shape[0], self.sequence_length, self.action_dimension])
+            ),
+            np.ones(list([self.input_shape[0], self.action_dimension])),
+            self.carry,
+        )
+        self.carry = np.array([self.carry[0][0], self.carry[1][0]])
+        self.carry = np.expand_dims(self.carry, axis=1)
+        self.carry = tuple(self.carry)
         if isinstance(self.optimizer, dict):
             CustomTrainState = self._create_custom_train_state(self.optimizer)
 
@@ -160,7 +182,13 @@ class ContinuousTargetModel(Network, ABC):
         logger.debug(f"Model updated")
         self.epoch_count += 1
 
-    def compute_q_values(self, observables: np.ndarray, actions: np.ndarray, carry: np.ndarray):
+    def compute_q_values(
+        self,
+        observables: np.ndarray,
+        actions: np.ndarray,
+        previous_actions: np.ndarray,
+        carry: np.ndarray,
+    ):
         """
         Compute the q-value of the network.
 
@@ -183,11 +211,19 @@ class ContinuousTargetModel(Network, ABC):
         """
         try:
             first_q_values, second_q_values = self.apply_fn(
-                {"params": self.model_state.params}, np.array(observables), np.array(actions), carry
+                {"params": self.model_state.params},
+                np.array(observables),
+                np.array(previous_actions),
+                np.array(actions),
+                carry,
             )
         except AttributeError:
             first_q_values, second_q_values = self.apply_fn(
-                {"params": self.model_state["params"]}, np.array(observables), np.array(actions), carry
+                {"params": self.model_state["params"]},
+                np.array(observables),
+                np.array(previous_actions),
+                np.array(actions),
+                carry,
             )
 
         return first_q_values, second_q_values
