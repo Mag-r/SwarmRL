@@ -56,8 +56,8 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             # ).all(), f"Covariance matrix must be positive definite, {np.diag(cov)=}"
             try:
                 action = jax.random.multivariate_normal(subkey, mean=mean, cov=cov)
-                action = action.at[:, :2].set((jnp.tanh(action.at[:, :2].get()) / 2.0 + 0.5) * 100)
-                action = action.at[:, 2].set((jnp.tanh(action.at[:, 2].get()) / 2.0 + 0.5) * 2 + 0.1)
+                action = action.at[:, :2].set((np.tanh(action.at[:, :2].get()) / 2.0 + 0.5) * 100)
+                action = action.at[:, 2].set((np.tanh(action.at[:, 2].get()) / 2.0 + 0.5) * 2 + 0.1)
                 
             except XlaRuntimeError as e:
                 logger.warning(f"Mean: {mean}, Cov: {cov}")

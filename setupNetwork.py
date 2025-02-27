@@ -3,10 +3,9 @@ import flax.linen as nn
 import swarmrl as srl
 import optax
 from jax import numpy as jnp
-from jax.experimental import jax2tf
+
 import os
-import tensorflow as tf
-from tensorflow import keras
+
 action_dimension = 3
 
 class ActoCriticNet(nn.Module):
@@ -170,8 +169,8 @@ def defineRLAgent(
     )
 
     # Define a sampling_strategy
-    # sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution()
-    sampling_strategy = srl.sampling_strategies.ExpertKnowledge()
+    sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution()
+    # sampling_strategy = srl.sampling_strategies.ExpertKnowledge()
     # Value function to use
     value_function = srl.value_functions.TDReturnsSAC(gamma=0.99, standardize=True)
 

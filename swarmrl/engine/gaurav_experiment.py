@@ -16,12 +16,12 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6342
+    labview_port = 6340
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  # check with Gaurav
 
-    def __init__(self, simulation: GauravSim, update_rate: float = 1.0):
+    def __init__(self, simulation: GauravSim, update_rate: float = 20.0):
         super().__init__()
         self.simulation = simulation
         self.update_rate = update_rate
@@ -135,11 +135,12 @@ class GauravExperiment(Engine):
 
     def integrate(self, n_slices: int, force_model: GlobalForceFunction):
         """Perform a real-experiment equivalent of an integration step."""
-        try:
-            for _ in range(n_slices):
-                action = force_model.calc_action(None)
-                action = self.clip_actions(action)
-                self.send_action(action)
-        finally:
-            logger.info("Terminating.")
-            self.stop_publishing()
+
+        for _ in range(n_slices):
+            action = force_model.calc_action(None)
+            action = MPIAction(magnetic_field=action[:2], keep_magnetic_field=action[2])
+            action = self.clip_actions(action)
+            self.send_action(action)
+            time.sleep(float(action.keep_magnetic_field) * 0.95)
+
+

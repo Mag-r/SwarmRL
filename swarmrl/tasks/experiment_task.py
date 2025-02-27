@@ -1,9 +1,11 @@
-import jax.numpy as np
+import jax.numpy as jnp
+import numpy as np
 from jax import random
 import logging
 import cv2
 from flax import linen as nn
 from swarmrl.tasks.task import Task
+from matplotlib import pyplot as plt
 
 logger = logging.getLogger(__name__)
 
@@ -14,47 +16,44 @@ class ExperimentTask(Task):
         super().__init__(particle_type=0)
         self.first_sweep_detector_params = cv2.SimpleBlobDetector_Params()
         self.first_sweep_detector_params.filterByArea = True
-        self.first_sweep_detector_params.maxArea = 130
-        self.first_sweep_detector_params.minArea = 50
+        self.first_sweep_detector_params.maxArea = 230
+        self.first_sweep_detector_params.minArea = 10
         self.first_sweep_detector_params.filterByColor = True
         self.first_sweep_detector_params.blobColor = 255
-        self.second_sweep_detector_params = cv2.SimpleBlobDetector_Params()
-        self.first_sweep_detector_params.filterByArea = True
-        self.first_sweep_detector_params.maxArea = 2000
-        self.first_sweep_detector_params.minArea = 50
+        self.first_sweep_detector_params.filterByConvexity = False
+        self.first_sweep_detector_params.filterByInertia = False
         self.first_detector = cv2.SimpleBlobDetector_create(
             self.first_sweep_detector_params
         )
-        self.second_detector = cv2.SimpleBlobDetector_create(
-            self.second_sweep_detector_params
-        )
+        
         self.number_particles = number_particles
         self.old_residual = None
+        self.old_angle_error = None
+        self.angle_noramlization = 1.6
+        self.regression_normalization = 2000
 
     def detect_blobs(self, image: np.ndarray) -> np.ndarray:
-        positions = np.zeros((self.number_particles, 2))
-        image = image > 1
+        image = image[0,0,:,:,0]
+        mean = np.mean(image)
+        std = np.std(image)
+        image = (image - mean) / std
+        
+        image = image > 3.5
         image = np.array(image * 255, dtype=np.uint8)
-        image = nn.avg_pool(image, (2, 2), strides=(1, 1), padding="Same") == 63
-        image = np.array(image * 255, dtype=np.uint8)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (4, 4))
+        image = cv2.erode(image, kernel, iterations=2)
+        image = image.astype(np.uint8)
         keypoints = self.first_detector.detect(image)
+        image_with_keypoints = cv2.drawKeypoints(image, keypoints, np.array([]), (0, 0, 255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+        logger.info(f"Detected {len(keypoints)} particles.")
+
+        # plt.imshow(image_with_keypoints, cmap="gray")
+        # plt.savefig("images/latest_camera_image_threshold.png")
+        # positions = np.zeros((self.number_particles, 2))
+        positions= np.array([])
         for i, kp in enumerate(keypoints):
             x, y = int(kp.pt[0]), int(kp.pt[1])
-            positions[i] = np.array([x, y])
-            radius = int(kp.size / 2 * 1.6)
-            cv2.circle(image, (x, y), radius, (0, 0, 0), -1)
-        number_detected_single_particles = len(keypoints)
-        keypoints = self.second_detector.detect(image)
-        positions[number_detected_single_particles:] = np.array(
-            [[int(kp.pt[0]), int(kp.pt[1])] for kp in keypoints]
-        ).repeat(2, axis=0)
-        number_detected_double_particles = len(keypoints)
-        logger.info(
-            f"Detected {number_detected_single_particles} single particles and "
-            f"{number_detected_double_particles} double particles. "
-            f"\n Total number of detected particles: "
-            f"{number_detected_single_particles + number_detected_double_particles*2} / {self.number_particles}"
-        )
+            positions=np.append(positions, np.array([[x, y]]),axis=0) if positions.size else np.array([[x, y]])
         return positions
 
     def orthogonal_regression_svd(self, x, y):
@@ -116,11 +115,19 @@ class ExperimentTask(Task):
         return std_angle
 
     def __call__(self, image: np.ndarray) -> float:
-        positions = self.detect_blobs(image)
-        regression_error = self.regression_error(positions)
-        if self.old_residual is None:
-            self.old_residual = regression_error
+        
+        if image is None:
+            logger.warning("No image provided.")
             return 0
-        reward = regression_error - self.old_residual
+        image = np.array(image, dtype=np.uint8)
+        positions = self.detect_blobs(image)
+        regression_error = self.regression_error(positions)/self.regression_normalization
+        angle_error = self.angle_between_particles(positions)/self.angle_noramlization
+        if self.old_residual is None and self.old_angle_error is None:
+            self.old_residual = regression_error
+            self.old_angle_error = angle_error
+            return 0
+        reward = - regression_error - angle_error
         self.old_residual = regression_error
-        return -reward - self.angle_between_particles(positions)
+        self.old_angle_error = angle_error
+        return reward

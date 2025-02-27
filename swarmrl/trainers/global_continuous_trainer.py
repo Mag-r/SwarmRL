@@ -106,26 +106,29 @@ class GlobalContinuousTrainer(Trainer):
                 running_reward=np.mean(rewards),
                 visible=load_bar,
             )
-            for _ in range(n_episodes):
-                self.engine.integrate(episode_length, force_fn)
-                force_fn, current_reward, killed = self.update_rl()
+            try:
+                for _ in range(n_episodes):
+                    self.engine.integrate(episode_length, force_fn)
+                    force_fn, current_reward, killed = self.update_rl()
 
-                if killed:
-                    print("Simulation has been ended by the task, ending training.")
-                    system_runner.finalize()
-                    break
+                    if killed:
+                        print("Simulation has been ended by the task, ending training.")
+                        system_runner.finalize()
+                        break
 
-                rewards.append(current_reward)
-                episode += 1
-                logger.info(
-                    f"Episode {episode}; mean immediate reward: {current_reward}"
-                )
-                progress.update(
-                    task,
-                    advance=1,
-                    Episode=episode,
-                    current_reward=np.round(current_reward, 2),
-                    running_reward=np.round(np.mean(rewards[-10:]), 2),
-                )
+                    rewards.append(current_reward)
+                    episode += 1
+                    logger.info(
+                        f"Episode {episode}; mean immediate reward: {current_reward}"
+                    )
+                    progress.update(
+                        task,
+                        advance=1,
+                        Episode=episode,
+                        current_reward=np.round(current_reward, 2),
+                        running_reward=np.round(np.mean(rewards[-10:]), 2),
+                    )
+            finally:
+                self.engine.stop_publishing()
 
         return np.array(rewards)

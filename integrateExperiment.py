@@ -28,6 +28,7 @@ sequence_length = 4
 resolution = 506
 action_dimension = 3
 number_particles = 7
+learning_rate = 1e-5
 
 obs = BaslerCameraObservable([resolution, resolution])
 task = ExperimentTask(number_particles=number_particles)
@@ -61,9 +62,9 @@ sim = GauravSim(
 experiment = GauravExperiment(sim)
 
 # %%
-protocol = setupNetwork.defineRLAgent(obs, task, 0.001)
+protocol = setupNetwork.defineRLAgent(obs, task, learning_rate=learning_rate)
 
 # protocol.restore_agent()
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
-reward = rl_trainer.perform_rl_training(experiment, 10000, 100)
+reward = rl_trainer.perform_rl_training(experiment, 10000, 10)

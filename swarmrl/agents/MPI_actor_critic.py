@@ -237,7 +237,9 @@ class MPIActorCriticAgent(Agent):
         colloids : List[Colloid]
                 List of colloids in the system.
         """
-        state_description = self.state_description(colloids)
+        state_description, image = self.state_description(colloids)
+        if colloids is None:
+            colloids = image
         previous_carry = self.network.carry
         previous_actions = self.assemble_previous_actions()
         previous_actions = np.expand_dims(previous_actions, axis=0)
@@ -327,4 +329,4 @@ class MPIActorCriticAgent(Agent):
                 axis=1,
             )
 
-        return state_description
+        return state_description, latest_observable
