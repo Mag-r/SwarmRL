@@ -184,6 +184,7 @@ class ContinuousActionModel(Network, ABC):
 
     def compute_action_training(
         self,
+        params: FrozenDict,
         observables: np.ndarray,
         previous_actions: np.ndarray,
         carry: np.ndarray = None,
@@ -208,7 +209,7 @@ class ContinuousActionModel(Network, ABC):
         """
         try:
             logits, _, _, _ = self.apply_fn(
-                {"params": self.model_state.params},
+                {"params": params},
                 np.array(observables),
                 np.array(previous_actions),
                 None,
@@ -255,11 +256,12 @@ class ContinuousActionModel(Network, ABC):
         action, _ = self.sampling_strategy(
             logits[np.newaxis, :], self.action_dimension, calculate_log_probs=False
         )
-
+        # action = self.exploration_policy(action)
         return action
 
     def compute_q_values(
         self,
+        params: FrozenDict,
         observables: np.ndarray,
         actions: np.ndarray,
         previous_actions: np.ndarray,
@@ -287,7 +289,7 @@ class ContinuousActionModel(Network, ABC):
         """
         try:
             _, first_q_values, second_q_values, _ = self.apply_fn(
-                {"params": self.model_state.params},
+                {"params": params},
                 np.array(observables),
                 np.array(previous_actions),
                 np.array(actions),
@@ -351,7 +353,7 @@ class ContinuousActionModel(Network, ABC):
             params=model_params, opt_state=opt_state, step=opt_step
         )
         self.epoch_count = epoch
-        self.carry = carry
+        # self.carry = carry
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
 
     def __call__(self, params: FrozenDict, episode_features, actions, carry):

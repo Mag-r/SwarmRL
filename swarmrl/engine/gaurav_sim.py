@@ -706,15 +706,13 @@ class GauravSim(Engine):
         return vels
 
     def get_rhs(self, t, state_flat: np.array):
-        state = state_flat.reshape((-1, 3))
+        state = np.array(state_flat.reshape((-1, 3)))
         # Apply hard boundary conditions to ensure particles stay within the box
         state[:, :2] = np.clip(state[:, :2], 0, self.params.box_length)
         b_field = calc_B_field(self.current_action)
         omega = self._get_omega(state, b_field)
         vel = self._get_vel(state, omega, b_field)
         state_derivative = np.concatenate([vel, omega[:, None]], axis=1)
-        if t-self.old_time <1e-5:
-            logger.debug(f"{t=}, ")
         return state_derivative.reshape(-1)
 
     def integrate(self, n_slices: int, model: GlobalForceFunction):

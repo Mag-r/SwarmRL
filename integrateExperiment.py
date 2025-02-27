@@ -1,29 +1,21 @@
 import numpy as np
-from jax import numpy as jnp
-import swarmrl as srl
-
-# %%
 from numba import cuda
-
-cuda.select_device(0)
-
-import swarmrl as srl
-from swarmrl.observables.basler_camera_MPI import BaslerCameraObservable
-from jax import numpy as np
+import pathlib
 import logging
-import flax.linen as setupNetwork
-from swarmrl.tasks.dummy_task import DummyTask
+import setupNetwork
+import os
+import pint
+
+from swarmrl.observables.basler_camera_MPI import BaslerCameraObservable
 from swarmrl.tasks.experiment_task import ExperimentTask
-from swarmrl.engine.gaurav_sim import *
+from swarmrl.engine.gaurav_sim import GauravSim, GauravSimParams
 from swarmrl.trainers.global_continuous_trainer import (
     GlobalContinuousTrainer as Trainer,
 )
-import pint
-import os
-import setupNetwork
 from swarmrl.engine.gaurav_experiment import GauravExperiment
-import setupNetwork
 
+
+cuda.select_device(0)
 
 # %%
 logging.basicConfig(
@@ -34,16 +26,12 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 sequence_length = 4
 resolution = 506
-number_of_gaussians = 1
-action_dimension = 8
-
+action_dimension = 3
+number_particles = 7
 
 obs = BaslerCameraObservable([resolution, resolution])
-#task = DummyTask(np.array([10000, 10000, 0]), target=np.array([5000, 5000, 0]))
-#print(f"task initialized, with normalization = {task.get_normalization()}", flush=True)
-task = ExperimentTask()
+task = ExperimentTask(number_particles=number_particles)
 
-# %%
 ureg = pint.UnitRegistry()
 Q_ = ureg.Quantity
 
@@ -73,10 +61,9 @@ sim = GauravSim(
 experiment = GauravExperiment(sim)
 
 # %%
-protocol = setupNetwork.defineRLAgent(obs, task, 0.0)
+protocol = setupNetwork.defineRLAgent(obs, task, 0.001)
 
 # protocol.restore_agent()
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
-reward = rl_trainer.perform_rl_training(experiment, 10000, 100000)
-
+reward = rl_trainer.perform_rl_training(experiment, 10000, 100)

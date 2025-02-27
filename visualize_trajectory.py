@@ -14,8 +14,6 @@ ax.set_xlim(0, 10000)
 ax.set_ylim(0, 10000)
 scat = ax.scatter(pos[0, :, 0], pos[0, :, 1])
 
-
-
 print(f"Creating animation, number of frames {len(pos)}", flush=True)
 
 progress_bar = tqdm(total=len(pos))
@@ -25,6 +23,7 @@ def update(frame):
     progress_bar.update(frame)
     print(f"Frame {frame}/{len(pos)}", flush=True)
     return (scat,)
+
 
 ani = FuncAnimation(fig, update, frames=range(len(pos)), blit=True)
 progress_bar.close()

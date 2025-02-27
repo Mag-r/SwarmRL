@@ -184,34 +184,15 @@ class ContinuousTargetModel(Network, ABC):
 
     def compute_q_values(
         self,
+        params: FrozenDict,
         observables: np.ndarray,
         actions: np.ndarray,
         previous_actions: np.ndarray,
         carry: np.ndarray,
     ):
-        """
-        Compute the q-value of the network.
-
-        Parameters
-        ----------
-        observables : np.ndarray (n_agents, observable_dimension)
-                Observable for each colloid for which the action should be computed.
-        actions : np.ndarray (n_agents, action_dimension)
-                Actions taken by the agent.
-        carry : np.ndarray
-                Carry state of the model.
-
-        Returns
-        -------
-        tuple : (np.ndarray, np.ndarray)
-                The first element is an array of indices corresponding to the action
-                taken by the agent. The value is bounded between 0 and the number of
-                output neurons. The second element is an array of the corresponding
-                log_probs (i.e. the output of the network put through a softmax).
-        """
         try:
             first_q_values, second_q_values = self.apply_fn(
-                {"params": self.model_state.params},
+                {"params": params},
                 np.array(observables),
                 np.array(previous_actions),
                 np.array(actions),
@@ -275,7 +256,7 @@ class ContinuousTargetModel(Network, ABC):
             params=model_params, opt_state=opt_state, step=opt_step
         )
         self.epoch_count = epoch
-        self.carry = carry
+        # self.carry = carry
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
 
     def __call__(self, params: FrozenDict, episode_features, actions, carry):

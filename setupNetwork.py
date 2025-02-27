@@ -3,16 +3,18 @@ import flax.linen as nn
 import swarmrl as srl
 import optax
 from jax import numpy as jnp
-
+from jax.experimental import jax2tf
+import os
+import tensorflow as tf
+from tensorflow import keras
 action_dimension = 3
-resolution = 112
-sequence_length = 4
 
 class ActoCriticNet(nn.Module):
     """A simple dense model.
     (batch,time,features)
     When dense at beginning, probably flatten is required
     """
+
     def setup(self):
         # Define a scanned LSTM cell
         self.ScanLSTM = nn.scan(
@@ -31,37 +33,46 @@ class ActoCriticNet(nn.Module):
 
         x = nn.Conv(features=12, kernel_size=(3, 3), strides=(3, 3))(x)
         x = nn.relu(x)
+        x = nn.LayerNorm()(x)
 
         x = nn.Conv(features=12, kernel_size=(3, 3), strides=(3, 3))(x)
         x = nn.relu(x)
+        x = nn.LayerNorm()(x)
 
         x = nn.Conv(features=12, kernel_size=(3, 3), strides=(3, 3))(x)
         x = nn.relu(x)
         x = nn.avg_pool(x, window_shape=(3, 3), strides=(2, 2))
+        x = nn.LayerNorm()(x)
 
         x = nn.Conv(features=12, kernel_size=(3, 3), strides=(2, 2))(x)
         x = nn.relu(x)
+        x = nn.LayerNorm()(x)
 
         x = x.reshape((batch_size, sequence_length, -1))
         x = nn.Dense(features=12)(x)
         x = nn.relu(x)
         x = jnp.concatenate([x, previous_actions], axis=-1)
+        x = nn.LayerNorm()(x)
         # Initialize carry if it's not provided
         if carry is None:
-            carry = self.lstm.initialize_carry(jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:])
+            carry = self.lstm.initialize_carry(
+                jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
+            )
             print("Action Net: new carry initialized")
         carry, x = self.lstm(carry, x)
         x = x.reshape((batch_size, -1))
-        
+        x = nn.LayerNorm()(x)
+
         actor = nn.Dense(features=12, name="Actor_1")(x)
         actor = nn.relu(actor)
+        actor = nn.LayerNorm()(actor)
         actor = nn.Dense(features=12, name="Actor_2")(actor)
         actor = nn.relu(actor)
-        actor = nn.Dense(features=action_dimension * 2, name="Actor_3")(actor)
-        actor = actor.at[:,:2].set(jnp.tanh(actor.at[:,:2].get()/2.0 + 0.5)) * 100  # range 0-100 gauss
-        actor = actor.at[:,2].set(jnp.tanh(actor.at[:,2].get()/2.0 + 0.5)) * 2  # range 0-2 seconds
-        actor = actor.at[:,3:].set(jnp.log(1+jnp.exp(actor.at[:,3:].get())))
+        actor = nn.LayerNorm()(actor)
         
+        actor = nn.Dense(features=action_dimension * 2, name="Actor_3")(actor)
+        actor = actor.at[:, 3:].set(jnp.log1p(jnp.exp(actor.at[:, 3:].get())))
+
         if action is not None:
             x = jnp.concatenate([x, action], axis=-1)
             q_1 = nn.Dense(features=12)(x)
@@ -82,6 +93,7 @@ class ActoCriticNet(nn.Module):
 
         return actor, q_1, q_2, carry
 
+
 class TargetNet(nn.Module):
     def setup(self):
         # Define a scanned LSTM cell
@@ -98,31 +110,38 @@ class TargetNet(nn.Module):
     @nn.compact
     def __call__(self, x, previous_actions, action, carry=None):
         batch_size, sequence_length = x.shape[0], x.shape[1]
+   
+        x = nn.Conv(features=12, kernel_size=(3, 3), strides=(3, 3))(x)
+        x = nn.relu(x)
+        x = nn.LayerNorm()(x)
 
         x = nn.Conv(features=12, kernel_size=(3, 3), strides=(3, 3))(x)
         x = nn.relu(x)
-        
-        x = nn.relu(x)
-        x = nn.Conv(features=12, kernel_size=(3, 3), strides=(3, 3))(x)
-        x = nn.relu(x)
+        x = nn.LayerNorm()(x)
 
         x = nn.Conv(features=12, kernel_size=(3, 3), strides=(3, 3))(x)
         x = nn.relu(x)
         x = nn.avg_pool(x, window_shape=(3, 3), strides=(2, 2))
+        x = nn.LayerNorm()(x)
 
         x = nn.Conv(features=12, kernel_size=(3, 3), strides=(2, 2))(x)
         x = nn.relu(x)
+        x = nn.LayerNorm()(x)
 
         x = x.reshape((batch_size, sequence_length, -1))
         x = nn.Dense(features=12)(x)
         x = nn.relu(x)
         x = jnp.concatenate([x, previous_actions], axis=-1)
+        x = nn.LayerNorm()(x)
         # Initialize carry if it's not provided
         if carry is None:
-            carry = self.lstm.initialize_carry(jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:])
+            carry = self.lstm.initialize_carry(
+                jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
+            )
             print("Action Net: new carry initialized")
         carry, x = self.lstm(carry, x)
         x = x.reshape((batch_size, -1))
+        x = nn.LayerNorm()(x)
         x = jnp.concatenate([x, action], axis=-1)
 
         q_1 = nn.Dense(features=12)(x)
@@ -140,18 +159,21 @@ class TargetNet(nn.Module):
         return q_1, q_2
 
 
-def defineRLAgent(obs, task: srl.tasks.Task ,learning_rate: float)->srl.agents.MPIActorCriticAgent:
+def defineRLAgent(
+    obs, task: srl.tasks.Task, learning_rate: float, resolution=506, sequence_length=4
+) -> srl.agents.MPIActorCriticAgent:
     # Define the model
     actor_critic = ActoCriticNet()
     target = TargetNet()
-    exploration_policy = srl.exploration_policies.GlobalOUExploration(drift=0.2, volatility = 0.003)
+    exploration_policy = srl.exploration_policies.GlobalOUExploration(
+        drift=0.2, volatility=0.3
+    )
 
     # Define a sampling_strategy
-    sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution()
-
+    # sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution()
+    sampling_strategy = srl.sampling_strategies.ExpertKnowledge()
     # Value function to use
     value_function = srl.value_functions.TDReturnsSAC(gamma=0.99, standardize=True)
-
 
     network = srl.networks.ContinuousActionModel(
         flax_model=actor_critic,
@@ -183,8 +205,10 @@ def defineRLAgent(obs, task: srl.tasks.Task ,learning_rate: float)->srl.agents.M
         action_dimension=action_dimension,
         deployment_mode=learning_rate == 0.0,
     )
-    
-    loss = srl.losses.SoftActorCriticGradientLoss(value_function=value_function, learning_rate=1E-4, minimum_entropy=-3)
+
+    loss = srl.losses.SoftActorCriticGradientLoss(
+        value_function=value_function, learning_rate=learning_rate, minimum_entropy=-3
+    )
 
     protocol = srl.agents.MPIActorCriticAgent(
         particle_type=0,

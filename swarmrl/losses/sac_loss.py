@@ -95,13 +95,126 @@ class SoftActorCriticGradientLoss(Loss):
             The loss of the actor-critic network for the last episode.
         """
         # line 12
+        desired_q_value = self._calculate_desired_q_value(
+            target_network_params,
+            target_network,
+            network_params,
+            network,
+            next_feature_data,
+            next_carry,
+            rewards,
+            action_sequence,
+        )
+
+        (critic_loss, critic_loss_per_sample), critic_grad = jax.value_and_grad(
+            self._calculate_critic_loss, has_aux=True
+        )(
+            network_params,
+            network,
+            feature_data,
+            carry,
+            actions,
+            action_sequence,
+            desired_q_value,
+        )
+        network.update_model(critic_grad)
+
+        # line 14
+        (actor_loss, (log_probs, actor_loss_per_sample)), actor_grad = (
+            jax.value_and_grad(self._calculate_actor_loss, has_aux=True)(
+                network_params, network, feature_data, carry, action_sequence
+            )
+        )
+        network.update_model(actor_grad)
+
+        self.error_predicted_reward = jnp.squeeze(
+            jnp.abs(critic_loss_per_sample) + jnp.abs(actor_loss_per_sample)
+        )
+        self.temperature = self.temperature - self.learning_rate * (
+            jnp.mean(log_probs) + self.minimum_entropy
+        )
+        # self.print_mean_gradients(critic_grad, actor_grad)
+        return actor_loss, critic_loss
+
+    def print_mean_gradients(self, critic_grad, actor_grad):
+        mean_critic_grad = jax.tree_util.tree_map(
+            lambda x: jnp.mean(jnp.abs(x)), critic_grad
+        )
+        mean_actor_grad = jax.tree_util.tree_map(
+            lambda x: jnp.mean(jnp.abs(x)), actor_grad
+        )
+        mean_grad = jax.tree_util.tree_map(
+            lambda x, y: x + y, mean_critic_grad, mean_actor_grad
+        )
+        mean_grad = jax.tree_util.tree_reduce(lambda x, y: x + y, mean_grad)
+        logger.info(f"averaged absolute value of gradients= {mean_grad}")
+
+    def _calculate_actor_loss(
+        self, network_params, network, feature_data, carry, action_sequence
+    ):
+        actions, log_probs = network.compute_action_training(
+            network_params, feature_data, action_sequence[:, :-1, :], carry
+        )
+        first_q_value, second_q_value = network.compute_q_values(
+            network_params, feature_data, actions, action_sequence[:, :-1, :], carry
+        )
+        actor_loss = jnp.minimum(
+            first_q_value, second_q_value
+        ) - self.temperature * jnp.expand_dims(log_probs, axis=-1)
+        return jnp.mean(actor_loss), (log_probs, actor_loss)
+
+    def _calculate_critic_loss(
+        self,
+        network_params: FrozenDict,
+        network,
+        feature_data,
+        carry,
+        actions,
+        action_sequence,
+        desired_q_value,
+    ):
+        """Calculates the critic loss. Line 13 in SpinningUp.
+
+        Args:
+            network_params (_type_): _description_
+            network (_type_): _description_
+            feature_data (_type_): _description_
+            carry (_type_): _description_
+            actions (_type_): _description_
+            action_sequence (_type_): _description_
+            desired_q_value (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        first_q_value, second_q_value = network.compute_q_values(
+            network_params, feature_data, actions, action_sequence[:, :-1, :], carry
+        )
+        desired_q_value = jnp.expand_dims(desired_q_value, axis=-1)
+        critic_loss = (first_q_value - desired_q_value) ** 2 + (
+            second_q_value - desired_q_value
+        ) ** 2
+        return jnp.mean(critic_loss), critic_loss
+
+    def _calculate_desired_q_value(
+        self,
+        target_network_params,
+        target_network,
+        network_params,
+        network,
+        next_feature_data,
+        next_carry,
+        rewards,
+        action_sequence,
+    ):
         next_action, next_log_probs = network.compute_action_training(
-            next_feature_data, action_sequence[:, 1:, :], next_carry
+            network_params, next_feature_data, action_sequence[:, 1:, :], next_carry
         )
         next_q_value = jnp.min(
             jnp.array(
                 [
                     target_network.compute_q_values(
+                        target_network_params,
                         next_feature_data,
                         next_action,
                         action_sequence[:, 1:, :],
@@ -117,41 +230,7 @@ class SoftActorCriticGradientLoss(Loss):
             next_log_probs,
         )
         desired_q_value = jax.lax.stop_gradient(desired_q_value)
-
-        # line 13
-        first_q_value, second_q_value = network.compute_q_values(
-            feature_data, actions, action_sequence[:, :-1, :], carry
-        )
-        critic_loss = jnp.mean((first_q_value - desired_q_value) ** 2) + jnp.mean(
-            (second_q_value - desired_q_value) ** 2
-        )
-        critic_grad = jax.grad(lambda x: critic_loss)(network_params)
-        network.update_model(critic_grad)
-
-        # line 14
-        actions, log_probs = network.compute_action_training(
-            feature_data, action_sequence[:, :-1, :], carry
-        )
-        first_q_value, second_q_value = network.compute_q_values(
-            feature_data, actions, action_sequence[:, :-1, :], carry
-        )
-        actor_loss = jnp.mean(
-            (jnp.minimum(first_q_value, second_q_value) - self.temperature * log_probs)
-        )
-        actor_grad = jax.grad(lambda x: actor_loss)(network_params)
-        network.update_model(actor_grad)
-
-        self.temperature = self.temperature - self.learning_rate * (
-            jnp.mean(log_probs) + self.minimum_entropy
-        )
-        self.error_predicted_reward = (
-            (first_q_value.squeeze() - desired_q_value)
-            + (second_q_value.squeeze() - desired_q_value) ** 2
-            + jnp.minimum(first_q_value, second_q_value).squeeze()
-            - self.temperature * log_probs
-        )
-        logger.info(f"{self.temperature=}, {actor_loss=}, {critic_loss=}")
-        self.polyak_averaging(0.99, target_network_params, network_params)
+        return desired_q_value
 
     def compute_loss(self, network: Network, target_network: Network, episode_data):
         """
@@ -188,7 +267,7 @@ class SoftActorCriticGradientLoss(Loss):
         action_sequence = jnp.array(episode_data.action_sequence)[:iterations_next]
         reward_data = jnp.array(episode_data.rewards)[:iterations_next]
         self.n_time_steps = jnp.shape(feature_data)[0]
-        self._calculate_loss(
+        first_actor_loss, first_critic_loss = self._calculate_loss(
             target_network_params=target_network.model_state.params,
             target_network=target_network,
             network_params=network.model_state.params,
@@ -201,6 +280,36 @@ class SoftActorCriticGradientLoss(Loss):
             actions=actions,
             action_sequence=action_sequence,
         )
+        # for _ in range(5):
+        #     _, _ = self._calculate_loss(
+        #         target_network_params=target_network.model_state.params,
+        #         target_network=target_network,
+        #         network_params=network.model_state.params,
+        #         network=network,
+        #         feature_data=feature_data,
+        #         next_feature_data=next_feature_data,
+        #         carry=carry,
+        #         next_carry=next_carry_data,
+        #         rewards=reward_data,
+        #         actions=actions,
+        #         action_sequence=action_sequence,
+        #     )
+        second_actor_loss, second_critic_loss = self._calculate_loss(
+            target_network_params=target_network.model_state.params,
+            target_network=target_network,
+            network_params=network.model_state.params,
+            network=network,
+            feature_data=feature_data,
+            next_feature_data=next_feature_data,
+            carry=carry,
+            next_carry=next_carry_data,
+            rewards=reward_data,
+            actions=actions,
+            action_sequence=action_sequence,
+        )
+        logger.info(f"{self.temperature=}")
+        logger.info(f"first iteration losses = (a,c){first_actor_loss, first_critic_loss} \n second iteration losses = {second_actor_loss, second_critic_loss}")
+        target_network.model_state.replace(params=self.polyak_averaging(0.9, target_network.model_state.params, network.model_state.params))
 
     def polyak_averaging(
         self, decay_rate: float, target_network_params, action_network_params
@@ -233,5 +342,4 @@ class SoftActorCriticGradientLoss(Loss):
                 target_network_params[layer],
                 action_network_params[layer],
             )
-
         return flax.core.freeze(target_network_params)

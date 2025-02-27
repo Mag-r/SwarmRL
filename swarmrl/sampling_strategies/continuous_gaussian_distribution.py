@@ -41,10 +41,10 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
         if deployment_mode:
             action = mean
         else:
-            epsilon = 1e-7
+            epsilon = 1e-1
             cov = np.array(
                 [
-                    np.diag(logits[batch_index, action_dimension:])/10
+                    np.diag(logits[batch_index, action_dimension:])
                     + np.eye(action_dimension) * epsilon
                     for batch_index in range(logits.shape[0])
                 ]
@@ -56,12 +56,13 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             # ).all(), f"Covariance matrix must be positive definite, {np.diag(cov)=}"
             try:
                 action = jax.random.multivariate_normal(subkey, mean=mean, cov=cov)
-                action = onp.maximum(action, [0, 0, 0.1])
-                action = onp.minimum(action, [100, 100, 10])
+                action = action.at[:, :2].set((jnp.tanh(action.at[:, :2].get()) / 2.0 + 0.5) * 100)
+                action = action.at[:, 2].set((jnp.tanh(action.at[:, 2].get()) / 2.0 + 0.5) * 2 + 0.1)
+                
             except XlaRuntimeError as e:
                 logger.warning(f"Mean: {mean}, Cov: {cov}")
                 raise e
-            assert not np.isnan(action).any(), "Action values must not be NaN."
+            assert not np.isnan(action).any() or not np.isinf(action).any(), "Action values must not be NaN or Inf."
 
         if calculate_log_probs and not deployment_mode:
             log_probs = jax.scipy.stats.multivariate_normal.logpdf(
@@ -69,5 +70,4 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             )
         else:
             log_probs = None
-
         return action, log_probs

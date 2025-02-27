@@ -112,7 +112,9 @@ class MPIActorCriticAgent(Agent):
 
         # Reset the trajectory storage.
         self.remove_old_data(self.trajectory.features.shape[1] - 40)
-        logger.debug(f"Shape of all saved properties in trajectory {np.array(self.trajectory.features).shape=}, {np.array(self.trajectory.actions).shape=}, {np.array(self.trajectory.rewards).shape=}, {np.array(self.trajectory.carry).shape=}, {np.array(self.trajectory.next_features).shape=}, {np.array(self.trajectory.next_carry).shape=}, {np.array(self.trajectory.action_sequence).shape=}")
+        logger.debug(
+            f"Shape of all saved properties in trajectory {np.array(self.trajectory.features).shape=}, {np.array(self.trajectory.actions).shape=}, {np.array(self.trajectory.rewards).shape=}, {np.array(self.trajectory.carry).shape=}, {np.array(self.trajectory.next_features).shape=}, {np.array(self.trajectory.next_carry).shape=}, {np.array(self.trajectory.action_sequence).shape=}"
+        )
         # self.trajectory = GlobalTrajectoryInformation()
 
         return rewards, killed
@@ -139,10 +141,10 @@ class MPIActorCriticAgent(Agent):
         self.trajectory = GlobalTrajectoryInformation()
 
     def remove_old_data(self, remove: int):
-        """Remove old data from the trajectory.
+        """Remove old data from the trajectory. The last 10 are always kept.
 
         Args:
-            keep (int): number of elements to remove.
+            remove (int): Number of elements to remove.
         """
         if remove > 0:
             indices = np.arange(len(self.loss.error_predicted_reward))
@@ -324,5 +326,5 @@ class MPIActorCriticAgent(Agent):
                 ],
                 axis=1,
             )
-        
+
         return state_description
