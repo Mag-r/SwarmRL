@@ -48,6 +48,7 @@ class GlobalContinuousTrainer(Trainer):
         for agent in self.agents.values():
             if isinstance(agent, MPIActorCriticAgent):
                 ag_reward, ag_killed = agent.update_agent()
+                logger.info(f"reward: {ag_reward}, sum: {np.sum(ag_reward)}")
                 reward += np.mean(ag_reward)
                 switches.append(ag_killed)
             else:
@@ -113,7 +114,7 @@ class GlobalContinuousTrainer(Trainer):
 
                     if killed:
                         print("Simulation has been ended by the task, ending training.")
-                        system_runner.finalize()
+                        self.engine.finalize()
                         break
 
                     rewards.append(current_reward)
@@ -129,6 +130,6 @@ class GlobalContinuousTrainer(Trainer):
                         running_reward=np.round(np.mean(rewards[-10:]), 2),
                     )
             finally:
-                self.engine.stop_publishing()
+                self.engine.finalize()
 
         return np.array(rewards)

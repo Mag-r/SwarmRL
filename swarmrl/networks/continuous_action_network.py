@@ -328,7 +328,7 @@ class ContinuousActionModel(Network, ABC):
         os.makedirs(directory, exist_ok=True)
 
         with open(directory + "/" + filename + ".pkl", "wb") as f:
-            pickle.dump((model_params, opt_state, opt_step, epoch, carry), f)
+            pickle.dump((model_params, opt_state, opt_step, epoch, carry, temp), f)
 
     def restore_model_state(self, filename: str = "model", directory: str = "Models"):
         """
@@ -376,3 +376,14 @@ class ContinuousActionModel(Network, ABC):
                 Output of the network.
         """
         raise NotImplementedError
+
+
+    def get_exp_temperature(self):
+        """
+        Get the temperature of the model.
+
+        Returns
+        -------
+        float : temperature of the model.
+        """
+        return np.exp(self.model_state.params["temperature"])

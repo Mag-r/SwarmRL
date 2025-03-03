@@ -111,7 +111,7 @@ class MPIActorCriticAgent(Agent):
             self.intrinsic_reward.update(self.trajectory)
 
         # Reset the trajectory storage.
-        self.remove_old_data(self.trajectory.features.shape[1] - 40)
+        self.remove_old_data(self.trajectory.features.shape[1] - 240)
         logger.debug(
             f"Shape of all saved properties in trajectory {np.array(self.trajectory.features).shape=}, {np.array(self.trajectory.actions).shape=}, {np.array(self.trajectory.rewards).shape=}, {np.array(self.trajectory.carry).shape=}, {np.array(self.trajectory.next_features).shape=}, {np.array(self.trajectory.next_carry).shape=}, {np.array(self.trajectory.action_sequence).shape=}"
         )
@@ -225,6 +225,26 @@ class MPIActorCriticAgent(Agent):
             directory=directory,
         )
 
+    def calc_reward(self, colloids: typing.List[Colloid], rewards=None):
+        """
+        Compute the reward for the agent.
+
+        Parameters
+        ----------
+        colloids : List[Colloid]
+                List of colloids in the system.
+        rewards : float
+                Reward to be added to the trajectory. Needed for gym environments.
+        """
+        if rewards is None:
+            rewards = self.task(colloids)
+        if self.intrinsic_reward:
+            rewards += self.intrinsic_reward.compute_reward(
+                episode_data=self.trajectory
+            )
+        if self.train:
+            self.trajectory.rewards.append(rewards)
+
     def calc_action(self, colloids: typing.List[Colloid]) -> typing.List[Action]:
         """
         Copmute the new state for the agent.
@@ -237,9 +257,9 @@ class MPIActorCriticAgent(Agent):
         colloids : List[Colloid]
                 List of colloids in the system.
         """
-        state_description, image = self.state_description(colloids)
+        state_description, latest_observation = self.state_description(colloids)
         if colloids is None:
-            colloids = image
+            colloids = latest_observation  # For experiments without colloids.
         previous_carry = self.network.carry
         previous_actions = self.assemble_previous_actions()
         previous_actions = np.expand_dims(previous_actions, axis=0)
@@ -248,13 +268,6 @@ class MPIActorCriticAgent(Agent):
             previous_actions=np.array(previous_actions),
         )[np.shape(state_description)[0] - 1]
         next_carry = self.network.carry
-        # Compute extrinsic rewards.
-        rewards = self.task(colloids)
-        # Compute intrinsic rewards if set.
-        if self.intrinsic_reward:
-            rewards += self.intrinsic_reward.compute_reward(
-                episode_data=self.trajectory
-            )
         # Update the trajectory information.
         if self.train:
             self.trajectory.feature_sequence.append(state_description)
@@ -271,7 +284,7 @@ class MPIActorCriticAgent(Agent):
                 if self.trajectory.actions.size > 0
                 else np.expand_dims(action, axis=0)
             )
-            self.trajectory.rewards.append(rewards)
+
             self.trajectory.killed = self.task.kill_switch
             if len(self.trajectory.feature_sequence) > 1:
                 self.trajectory.next_features.append(state_description)
