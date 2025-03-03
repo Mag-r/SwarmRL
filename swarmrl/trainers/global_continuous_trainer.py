@@ -6,6 +6,15 @@ import numpy as np
 from rich.progress import BarColumn, Progress, TimeRemainingColumn
 from typing import List, Tuple
 import logging
+import queue
+import cloudpickle
+import pickle
+import jax
+import os
+pickle.Pickler = cloudpickle.Pickler
+import multiprocessing as mp
+mp.reduction.ForkingPickler = cloudpickle.Pickler
+
 
 from swarmrl.engine.engine import Engine
 from swarmrl.trainers.trainer import Trainer
@@ -13,6 +22,28 @@ from swarmrl.force_functions.global_force_fn import GlobalForceFunction
 from swarmrl.agents.MPI_actor_critic import MPIActorCriticAgent
 
 logger = logging.getLogger(__name__)
+
+
+def worker_run(engine: Engine, force_fn, _q: mp.Queue):
+    import jax
+    jax.config.update("jax_platform_name", "cuda")
+    device = jax.devices()[0]
+    logger.info("Worker started.")
+    logger.info(jax.devices())
+    while True:
+        try:
+            _q.get(block=True, timeout=0)
+            logger.info("Worker ended.")
+            return
+        except queue.Empty:
+            engine.integrate(1, force_fn)
+
+
+def force_cuda_init():
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    print(jax.devices())  # CUDA sollte hier sichtbar sein!
+
 
 class GlobalContinuousTrainer(Trainer):
     """
@@ -58,7 +89,9 @@ class GlobalContinuousTrainer(Trainer):
         interaction_model = GlobalForceFunction(agents=self.agents)
         logger.debug("RL updated.")
         return interaction_model, np.array(reward), any(switches)
-
+    
+    
+                
     def perform_rl_training(
         self,
         system_runner: Engine,
@@ -84,6 +117,8 @@ class GlobalContinuousTrainer(Trainer):
         rewards = [0.0]
         current_reward = 0.0
         episode = 0
+        mp.set_start_method('spawn', force=True)                 
+
         force_fn = self.initialize_training()
 
         # Initialize the tasks and observables. 
@@ -109,8 +144,18 @@ class GlobalContinuousTrainer(Trainer):
             )
             try:
                 for _ in range(n_episodes):
+                    logger.info(jax.devices())
                     self.engine.integrate(episode_length, force_fn)
+                    
+                    mp.set_start_method('spawn', force=True)                 
+
+                    q = mp.Queue(maxsize=1)
+                    p = mp.Process(target=worker_run, args=(self.engine, force_fn, q))
+                    p.start()
+                    logger.info(jax.devices())
                     force_fn, current_reward, killed = self.update_rl()
+                    q.put(True)
+                    p.join()
 
                     if killed:
                         print("Simulation has been ended by the task, ending training.")

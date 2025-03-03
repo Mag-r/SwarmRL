@@ -21,7 +21,6 @@ from swarmrl.trainers.global_continuous_trainer import (
 # %%
 action_dimension = 3
 
-
 class ActoCriticNet(nn.Module):
     """A simple dense model.
     (batch,time,features)
@@ -148,7 +147,7 @@ class TargetNet(nn.Module):
 # %%
 
 
-cuda.select_device(0)
+# cuda.select_device(0)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s\n",
@@ -235,7 +234,7 @@ system_runner = CarBenchmark()
 # protocol.restore_agent()
 rl_trainer = Trainer([protocol])
 print(f"Start training, with learning rate {learning_rate}", flush=True)
-reward = rl_trainer.perform_rl_training(system_runner, 100, 100)
+reward = rl_trainer.perform_rl_training(system_runner, 100, 10)
 total_reward.append(reward)
 
 np.save("total_reward.npy", total_reward)
