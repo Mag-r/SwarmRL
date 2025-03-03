@@ -129,6 +129,6 @@ class GlobalContinuousTrainer(Trainer):
                         running_reward=np.round(np.mean(rewards[-10:]), 2),
                     )
             finally:
-                self.engine.stop_publishing()
+                self.engine.finalize()
 
         return np.array(rewards)

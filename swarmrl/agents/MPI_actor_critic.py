@@ -224,6 +224,36 @@ class MPIActorCriticAgent(Agent):
             filename=f"{self.__name__()}_{self.particle_type}_target",
             directory=directory,
         )
+        
+    def calc_reward(self, colloids: typing.List[Colloid], external_reward: float = 0.0) -> float:
+        """
+        Compute the reward for the agent.
+
+        Parameters
+        ----------
+        colloids : List[Colloid]
+                List of colloids in the system.
+        external_reward : float (default=0.0)
+                External reward to add to the reward. Neede for Benchmark.
+
+        Returns
+        -------
+        reward : float
+                Reward for the agent.
+        """
+        if colloids is None:
+            colloids = self.observable.compute_observable(None)
+        reward = self.task(colloids)
+        reward += external_reward
+        if self.intrinsic_reward:
+            reward += self.intrinsic_reward.compute_reward(
+                episode_data=self.trajectory
+            )
+        if self.train:
+            self.trajectory.rewards.append(reward)
+            
+        return reward
+        
 
     def calc_action(self, colloids: typing.List[Colloid]) -> typing.List[Action]:
         """
@@ -248,13 +278,7 @@ class MPIActorCriticAgent(Agent):
             previous_actions=np.array(previous_actions),
         )[np.shape(state_description)[0] - 1]
         next_carry = self.network.carry
-        # Compute extrinsic rewards.
-        rewards = self.task(colloids)
-        # Compute intrinsic rewards if set.
-        if self.intrinsic_reward:
-            rewards += self.intrinsic_reward.compute_reward(
-                episode_data=self.trajectory
-            )
+
         # Update the trajectory information.
         if self.train:
             self.trajectory.feature_sequence.append(state_description)
@@ -271,7 +295,6 @@ class MPIActorCriticAgent(Agent):
                 if self.trajectory.actions.size > 0
                 else np.expand_dims(action, axis=0)
             )
-            self.trajectory.rewards.append(rewards)
             self.trajectory.killed = self.task.kill_switch
             if len(self.trajectory.feature_sequence) > 1:
                 self.trajectory.next_features.append(state_description)

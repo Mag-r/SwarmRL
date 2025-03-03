@@ -356,6 +356,16 @@ class ContinuousActionModel(Network, ABC):
         # self.carry = carry
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
 
+    def get_exp_temperature(self) -> float:
+        """
+        Get the temperature of the model.
+
+        Returns
+        -------
+        float : temperature of the model.
+        """
+        return np.exp(self.model_state.params["temperature"])
+
     def __call__(self, params: FrozenDict, episode_features, actions, carry):
         """
         vmaped version of the model call function.

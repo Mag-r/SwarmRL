@@ -24,6 +24,9 @@ class ActoCriticNet(nn.Module):
             out_axes=1,
         )
         self.lstm = self.ScanLSTM(features=12)
+        temperature = self.param(
+            "temperature", lambda key, shape: jnp.full(shape, jnp.log(0.2)), (1,)
+        )
 
     @nn.remat
     @nn.compact
@@ -68,7 +71,7 @@ class ActoCriticNet(nn.Module):
         actor = nn.Dense(features=12, name="Actor_2")(actor)
         actor = nn.relu(actor)
         actor = nn.LayerNorm()(actor)
-        
+
         actor = nn.Dense(features=action_dimension * 2, name="Actor_3")(actor)
         actor = actor.at[:, 3:].set(jnp.log1p(jnp.exp(actor.at[:, 3:].get())))
 
