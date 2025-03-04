@@ -161,6 +161,7 @@ class SoftActorCriticGradientLoss(Loss):
         actor_loss = jnp.minimum(
             first_q_value, second_q_value
         ) - network.get_exp_temperature() * jnp.expand_dims(log_probs, axis=-1)
+        actor_loss = - actor_loss
         return jnp.mean(actor_loss), (log_probs, actor_loss)
 
     def _calculate_critic_loss(

@@ -364,7 +364,7 @@ class ContinuousActionModel(Network, ABC):
         -------
         float : temperature of the model.
         """
-        return np.exp(self.model_state.params["temperature"])
+        return jax.lax.stop_gradient(np.exp(self.model_state.params["temperature"]))
 
     def __call__(self, params: FrozenDict, episode_features, actions, carry):
         """

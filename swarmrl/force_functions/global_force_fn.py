@@ -50,6 +50,11 @@ class GlobalForceFunction:
         Set the kill switch.
         """
         self._kill_switch = value
+        
+    def calc_reward(self, colloids: typing.List[Colloid], external_reward: float = 0.0):
+        for agent in self.agents:
+            self.agents[agent].calc_reward(colloids=colloids, external_reward=external_reward)
+            
 
     def calc_action(self, colloids: typing.List[Colloid]) -> typing.List[Action]:
         """

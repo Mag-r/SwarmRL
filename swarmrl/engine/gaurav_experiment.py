@@ -146,5 +146,6 @@ class GauravExperiment(Engine):
             action = self.clip_actions(action)
             self.send_action(action)
             time.sleep(float(action.keep_magnetic_field) * 0.95)
+            force_model.calc_reward(self.colloids)
 
 

@@ -41,7 +41,7 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
         if deployment_mode:
             action = mean
         else:
-            epsilon = 1e-1
+            epsilon = 1e-7
             cov = np.array(
                 [
                     np.diag(logits[batch_index, action_dimension:])
@@ -56,8 +56,7 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             # ).all(), f"Covariance matrix must be positive definite, {np.diag(cov)=}"
             try:
                 action = jax.random.multivariate_normal(subkey, mean=mean, cov=cov)
-                action = action.at[:, :2].set((np.tanh(action.at[:, :2].get()) / 2.0 + 0.5) * 100)
-                action = action.at[:, 2].set((np.tanh(action.at[:, 2].get()) / 2.0 + 0.5) * 2 + 0.1)
+                logger.info(f"Action before tanh: {action}")
                 
             except XlaRuntimeError as e:
                 logger.warning(f"Mean: {mean}, Cov: {cov}")
@@ -70,4 +69,6 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             )
         else:
             log_probs = None
+        action = action.at[:, :2].set((np.tanh(action.at[:, :2].get()) / 2.0 + 0.5) * 100)
+        action = action.at[:, 2].set((np.tanh(action.at[:, 2].get()) / 2.0 + 0.5) * 2 + 0.1)
         return action, log_probs

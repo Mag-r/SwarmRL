@@ -22,13 +22,13 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s\n",
 )
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 sequence_length = 4
 resolution = 506
 action_dimension = 3
 number_particles = 7
-learning_rate = 1e-5
+learning_rate = 1e-2
 
 obs = BaslerCameraObservable([resolution, resolution])
 task = ExperimentTask(number_particles=number_particles)
