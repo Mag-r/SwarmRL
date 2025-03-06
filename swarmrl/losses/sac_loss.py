@@ -10,17 +10,15 @@ https://spinningup.openai.com/en/latest/algorithms/vpg.html
 """
 
 import logging
-import pickle
 
 import jax
 import jax.numpy as jnp
-import optax
 from flax.core.frozen_dict import FrozenDict
 import flax
+from functools import partial
 
 from swarmrl.losses.loss import Loss
 from swarmrl.networks.network import Network
-from swarmrl.utils.utils import gather_n_dim_indices
 from swarmrl.value_functions.td_return_sac import TDReturnsSAC
 
 logger = logging.getLogger(__name__)
@@ -37,7 +35,6 @@ class SoftActorCriticGradientLoss(Loss):
     def __init__(
         self,
         value_function: TDReturnsSAC = TDReturnsSAC(),
-        learning_rate: float = 0.01,
         minimum_entropy: float = 0.0,
     ):
         """
@@ -49,7 +46,6 @@ class SoftActorCriticGradientLoss(Loss):
         """
         super(Loss, self).__init__()
         self.value_function = value_function
-        self.learning_rate = learning_rate
         self.n_particles = None
         self.n_time_steps = None
         self.error_predicted_reward = None
@@ -132,8 +128,8 @@ class SoftActorCriticGradientLoss(Loss):
         temperature_loss, temperature_grad = jax.value_and_grad(
             self._calculate_temperature_loss
         )(network_params, network, log_probs)
-        # network.update_model(temperature_grad)
-
+        network.update_model(temperature_grad)
+        self.print_mean_gradients(critic_grad, actor_grad)
         return actor_loss, critic_loss, temperature_loss
 
     def print_mean_gradients(self, critic_grad, actor_grad):
@@ -158,9 +154,10 @@ class SoftActorCriticGradientLoss(Loss):
         first_q_value, second_q_value = network.compute_q_values(
             network_params, feature_data, actions, action_sequence[:, :-1, :], carry
         )
-        actor_loss = jnp.minimum(
+        actor_loss = jax.lax.stop_gradient(jnp.minimum(
             first_q_value, second_q_value
-        ) - network.get_exp_temperature() * jnp.expand_dims(log_probs, axis=-1)
+        )) - network.get_exp_temperature() * jnp.expand_dims(log_probs, axis=-1)
+
         return jnp.mean(actor_loss), (log_probs, actor_loss)
 
     def _calculate_critic_loss(
@@ -234,7 +231,7 @@ class SoftActorCriticGradientLoss(Loss):
 
     def _calculate_temperature_loss(self, network_params, network: Network, log_probs):
         temperature = network_params["temperature"]
-        logger.info(f"action entropy = {jnp.mean(log_probs)}")
+        # logger.info(f"action entropy = {jnp.mean(log_probs)}")
         return - jnp.mean(temperature * (log_probs + self.minimum_entropy))
 
     def compute_loss(self, network: Network, target_network: Network, episode_data):
@@ -287,20 +284,20 @@ class SoftActorCriticGradientLoss(Loss):
                 action_sequence=action_sequence,
             )
         )
-        # for _ in range(5):
-        #     _, _ = self._calculate_loss(
-        #         target_network_params=target_network.model_state.params,
-        #         target_network=target_network,
-        #         network_params=network.model_state.params,
-        #         network=network,
-        #         feature_data=feature_data,
-        #         next_feature_data=next_feature_data,
-        #         carry=carry,
-        #         next_carry=next_carry_data,
-        #         rewards=reward_data,
-        #         actions=actions,
-        #         action_sequence=action_sequence,
-        #     )
+        for _ in range(300):
+            self._calculate_loss(
+                target_network_params=target_network.model_state.params,
+                target_network=target_network,
+                network_params=network.model_state.params,
+                network=network,
+                feature_data=feature_data,
+                next_feature_data=next_feature_data,
+                carry=carry,
+                next_carry=next_carry_data,
+                rewards=reward_data,
+                actions=actions,
+                action_sequence=action_sequence,
+            )
         second_actor_loss, second_critic_loss, second_temperature_loss = (
             self._calculate_loss(
                 target_network_params=target_network.model_state.params,
@@ -320,6 +317,7 @@ class SoftActorCriticGradientLoss(Loss):
         logger.info(
             f"first iteration losses = (a,c,t){first_actor_loss, first_critic_loss, first_temperature_loss} \n second iteration losses = {second_actor_loss, second_critic_loss, second_temperature_loss}"
         )
+
         target_network.model_state.replace(
             params=self.polyak_averaging(
                 0.9, target_network.model_state.params, network.model_state.params
