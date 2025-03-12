@@ -84,18 +84,6 @@ class GlobalForceFunction:
         self.kill_switch = any(switches)
         return action
 
-    def calc_reward(self, colloids: typing.List[Colloid], rewards=None):
-        """
-        Compute the reward for the system based on the current colloid position.
-
-        Returns
-        -------
-        reward: np.ndarray
-                Return the reward for the system.
-        """
-
-        for agent in self.agents:
-            self.agents[agent].calc_reward(colloids=colloids, rewards=rewards)
 
     def save_agents(self, directory: str = "Models"):
         """

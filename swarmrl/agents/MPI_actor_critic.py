@@ -197,7 +197,7 @@ class MPIActorCriticAgent(Agent):
         Initialize all of the models in the gym.
         """
         self.actor_network.reinitialize_network()
-        self.target_network.reinitialize_network()
+        self.critic_network.reinitialize_network()
 
     def save_agent(self, directory: str = "Models"):
         """
@@ -209,10 +209,10 @@ class MPIActorCriticAgent(Agent):
                 Location to save the models.
         """
         self.actor_network.export_model(
-            filename=f"{self.__name__()}_{self.particle_type}", directory=directory
+            filename=f"{self.__name__()}_{self.particle_type}_actor", directory=directory
         )
-        self.target_network.export_model(
-            filename=f"{self.__name__()}_{self.particle_type}_target",
+        self.critic_network.export_model(
+            filename=f"{self.__name__()}_{self.particle_type}_critic",
             directory=directory,
         )
 
@@ -221,10 +221,10 @@ class MPIActorCriticAgent(Agent):
         Restore the agent state from a directory.
         """
         self.actor_network.restore_model_state(
-            filename=f"{self.__name__()}_{self.particle_type}", directory=directory
+            filename=f"{self.__name__()}_{self.particle_type}_actor", directory=directory
         )
-        self.target_network.restore_model_state(
-            filename=f"{self.__name__()}_{self.particle_type}_target",
+        self.critic_network.restore_model_state(
+            filename=f"{self.__name__()}_{self.particle_type}_critic",
             directory=directory,
         )
         
