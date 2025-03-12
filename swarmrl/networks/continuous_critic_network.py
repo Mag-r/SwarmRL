@@ -16,7 +16,6 @@ from flax.core.frozen_dict import FrozenDict
 from flax.training.train_state import TrainState
 from optax._src.base import GradientTransformation
 
-from swarmrl.actions import MPIAction
 from swarmrl.exploration_policies.exploration_policy import ExplorationPolicy
 from swarmrl.exploration_policies.random_exploration import RandomExploration
 from swarmrl.networks.network import Network
@@ -24,11 +23,12 @@ from swarmrl.sampling_strategies.continuous_gaussian_distribution import (
     ContinuousGaussianDistribution,
 )
 from swarmrl.sampling_strategies.sampling_strategy import SamplingStrategy
+from swarmrl.actions import MPIAction
 
 logger = logging.getLogger(__name__)
 
 
-class ContinuousTargetModel(Network, ABC):
+class ContinuousCriticModel(Network, ABC):
     """
     Class for the Flax model in ZnRND.
 
@@ -40,11 +40,9 @@ class ContinuousTargetModel(Network, ABC):
 
     def __init__(
         self,
-        flax_model: nn.Module,
+        critic_model: nn.Module,
         input_shape: tuple,
         optimizer: GradientTransformation = None,
-        exploration_policy: ExplorationPolicy = RandomExploration(probability=0.0),
-        sampling_strategy: SamplingStrategy = ContinuousGaussianDistribution(),
         action_dimension: int = 3,
         rng_key: int = None,
         deployment_mode: bool = False,
@@ -70,25 +68,25 @@ class ContinuousTargetModel(Network, ABC):
         """
         if rng_key is None:
             rng_key = onp.random.randint(0, 1027465782564)
-        self.sampling_strategy = sampling_strategy
-        self.model = flax_model
+        self.critic_network = critic_model
+        self.target_network = critic_model.copy()
 
-        self.apply_fn = (
-            self.model.apply
+        self.critic_apply_fn = (
+            self.critic_network.apply
         )  # jax.jit(jax.vmap(self.model.apply, in_axes=(None, 0, 0, None))) #erstes argument nicht; zwweites in erster ache, drittes nicht
+        self.target_apply_fn = self.target_network.apply
         self.input_shape = input_shape
-        self.model_state = None
+        self.critic_state = None
+        self.target_state = None
         self.action_dimension = action_dimension
         self.sequence_length = self.input_shape[1]
-        self.carry = None
-        # initialize the model state
+
         init_rng = jax.random.PRNGKey(rng_key)
         _, subkey = jax.random.split(init_rng)
         self.optimizer = optimizer
-        self.model_state = self._create_train_state(subkey)
+        self.critic_state, self.target_state = self._create_train_state(subkey)
         self.deployment_mode = deployment_mode
         if not deployment_mode:
-            self.exploration_policy = exploration_policy
             self.epoch_count = 0
 
     def _create_custom_train_state(self, optimizer: dict):
@@ -112,7 +110,7 @@ class ContinuousTargetModel(Network, ABC):
                 initial state of model to then be trained.
                 If you have multiple optimizers, this will create a custom train state.
         """
-        params = self.model.init(
+        params = self.critic_network.init(
             init_rng,
             np.ones(list(self.input_shape)),
             np.ones(
@@ -120,7 +118,7 @@ class ContinuousTargetModel(Network, ABC):
             ),
             np.ones(list([self.input_shape[0], self.action_dimension])),
         )["params"]
-        model_summary = self.model.tabulate(
+        model_summary = self.critic_network.tabulate(
             jax.random.PRNGKey(1),
             np.ones(list(self.input_shape)),
             np.ones(
@@ -129,28 +127,37 @@ class ContinuousTargetModel(Network, ABC):
             np.ones(list([self.input_shape[0], self.action_dimension])),
         )
         print(model_summary)
-        *_, self.carry = self.model.apply(
-            {"params": params},
+
+        if isinstance(self.optimizer, dict):
+            CustomTrainState = self._create_custom_train_state(self.optimizer)
+
+            critic_state = CustomTrainState.create(
+                apply_fn=self.critic_network.apply, params=params, tx=self.optimizer
+            )
+        else:
+            critic_state = TrainState.create(
+                apply_fn=self.critic_network.apply, params=params, tx=self.optimizer
+            )
+        params = self.target_network.init(
+            init_rng,
             np.ones(list(self.input_shape)),
             np.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
             np.ones(list([self.input_shape[0], self.action_dimension])),
-            self.carry,
-        )
-        self.carry = np.array([self.carry[0][0], self.carry[1][0]])
-        self.carry = np.expand_dims(self.carry, axis=1)
-        self.carry = tuple(self.carry)
+        )["params"]
+        
         if isinstance(self.optimizer, dict):
             CustomTrainState = self._create_custom_train_state(self.optimizer)
 
-            return CustomTrainState.create(
-                apply_fn=self.model.apply, params=params, tx=self.optimizer
+            target_state = CustomTrainState.create(
+                apply_fn=self.target_network.apply, params=params, tx=self.optimizer
             )
         else:
-            return TrainState.create(
-                apply_fn=self.model.apply, params=params, tx=self.optimizer
+            target_state = TrainState.create(
+                apply_fn=self.target_network.apply, params=params, tx=self.optimizer
             )
+        return critic_state, target_state
 
     def reinitialize_network(self):
         """
@@ -159,7 +166,7 @@ class ContinuousTargetModel(Network, ABC):
         rng_key = onp.random.randint(0, 1027465782564)
         init_rng = jax.random.PRNGKey(rng_key)
         _, subkey = jax.random.split(init_rng)
-        self.model_state = self._create_train_state(subkey)
+        self.critic_state, self.target_state = self._create_train_state(subkey)
 
     def update_model(self, grads):
         """
@@ -169,20 +176,19 @@ class ContinuousTargetModel(Network, ABC):
         """
         # Logging for grads and pre-train model state
         logger.debug(f"{grads=}")
-        logger.debug(f"{self.model_state=}")
+        logger.debug(f"{self.critic_state=}")
 
         if isinstance(self.optimizer, dict):
-            pass
-
+            raise NotImplementedError
         else:
-            self.model_state = self.model_state.apply_gradients(grads=grads)
+            self.critic_state = self.critic_state.apply_gradients(grads=grads)
 
         # Logging for post-train model state
-        logger.debug(f"{self.model_state=}")
+        logger.debug(f"{self.critic_state=}")
         logger.debug(f"Model updated")
         self.epoch_count += 1
 
-    def compute_q_values(
+    def compute_q_values_critic(
         self,
         params: FrozenDict,
         observables: np.ndarray,
@@ -191,7 +197,7 @@ class ContinuousTargetModel(Network, ABC):
         carry: np.ndarray,
     ):
         try:
-            first_q_values, second_q_values = self.apply_fn(
+            first_q_values, second_q_values = self.critic_apply_fn(
                 {"params": params},
                 np.array(observables),
                 np.array(previous_actions),
@@ -199,8 +205,35 @@ class ContinuousTargetModel(Network, ABC):
                 carry,
             )
         except AttributeError:
-            first_q_values, second_q_values = self.apply_fn(
+            first_q_values, second_q_values = self.critic_apply_fn(
                 {"params": self.model_state["params"]},
+                np.array(observables),
+                np.array(previous_actions),
+                np.array(actions),
+                carry,
+            )
+
+        return first_q_values, second_q_values
+
+    def compute_q_values_target(
+        self,
+        observables: np.ndarray,
+        actions: np.ndarray,
+        previous_actions: np.ndarray,
+        carry: np.ndarray,
+    ):
+
+        try:
+            first_q_values, second_q_values = self.target_apply_fn(
+                {"params": self.target_state.params},
+                np.array(observables),
+                np.array(previous_actions),
+                np.array(actions),
+                carry,
+            )
+        except AttributeError:
+            first_q_values, second_q_values = self.target_apply_fn(
+                {"params": self.target_state["params"]},
                 np.array(observables),
                 np.array(previous_actions),
                 np.array(actions),
@@ -226,12 +259,12 @@ class ContinuousTargetModel(Network, ABC):
         opt_state = self.model_state.opt_state
         opt_step = self.model_state.step
         epoch = self.epoch_count
-        carry = self.carry
+
 
         os.makedirs(directory, exist_ok=True)
 
         with open(directory + "/" + filename + ".pkl", "wb") as f:
-            pickle.dump((model_params, opt_state, opt_step, epoch, carry), f)
+            pickle.dump((model_params, opt_state, opt_step, epoch), f)
 
     def restore_model_state(self, filename: str = "model", directory: str = "Models"):
         """
@@ -250,14 +283,30 @@ class ContinuousTargetModel(Network, ABC):
         """
 
         with open(directory + "/" + filename + ".pkl", "rb") as f:
-            model_params, opt_state, opt_step, epoch, carry = pickle.load(f)
+            model_params, opt_state, opt_step, epoch= pickle.load(f)
 
         self.model_state = self.model_state.replace(
             params=model_params, opt_state=opt_state, step=opt_step
         )
         self.epoch_count = epoch
-        # self.carry = carry
+
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
+
+    def polyak_averaging(self, tau: float = 0.005):
+        """
+        Update the target network with Polyak averaging.
+
+        Parameters
+        ----------
+        tau : float
+                Weight of the target network update.
+        """
+        critic_params = self.critic_state.params
+        target_params = self.target_state.params
+        new_target_params = jax.tree_util.tree_map(
+            lambda p, tp: tau * p + (1 - tau) * tp, critic_params, target_params
+        )
+        self.target_state = self.target_state.replace(params=new_target_params)
 
     def __call__(self, params: FrozenDict, episode_features, actions, carry):
         """

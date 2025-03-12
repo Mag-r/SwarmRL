@@ -24,11 +24,11 @@ logging.basicConfig(
 )
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
-sequence_length = 4
+sequence_length = 2
 resolution = 506
 action_dimension = 3
 number_particles = 7
-learning_rate = 1e-5
+learning_rate = 1e-2
 
 obs = BaslerCameraObservable([resolution, resolution])
 task = ExperimentTask(number_particles=number_particles)

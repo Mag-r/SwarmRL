@@ -19,7 +19,8 @@ from swarmrl.components.colloid import Colloid
 from swarmrl.force_functions.global_force_fn import GlobalForceFunction
 
 logger = logging.getLogger(__name__)
- 
+
+
 @dataclasses.dataclass
 class GauravSimParams:
     """
@@ -97,10 +98,9 @@ class Raft:
     alpha: float  # in radians
     magnetic_moment: float
     rotational_velocity: float = 0.0
+
     def get_director(self) -> np.array:
         return np.array([np.cos(self.alpha), np.sin(self.alpha)])
-
-
 
 
 class Model:
@@ -235,9 +235,7 @@ class GauravSim(Engine):
             self.capillary_torque = cap_torque
             self.max_cap_distance = cap_distances[-1]
         self.save_h5 = save_h5
-        
-            
-        
+
     def add_colloids(self, pos: np.array, alpha: float, magnetic_moment: float):
         self._check_already_initialised()
         self.colloids.append(
@@ -254,7 +252,7 @@ class GauravSim(Engine):
     def _update_rafts_from_state(self, state):
         for r, s in zip(self.colloids, state):
             r.pos = s[:2]
-            r.rotational_velocity = (s[2] - r.alpha)/self.params.time_slice
+            r.rotational_velocity = (s[2] - r.alpha) / self.params.time_slice
             # if r.rotational_velocity > 10000:
             #     raise ValueError(f"rotational velocity too high {r.rotational_velocity}")
             r.alpha = s[2]
@@ -280,7 +278,15 @@ class GauravSim(Engine):
 
         n_rafts = len(self.colloids)
 
-        self.h5_dataset_keys = ["Times", "Ids", "Alphas", "Angular_Velocity", "Unwrapped_Positions","Magnetic_field","Time_to_keep"]
+        self.h5_dataset_keys = [
+            "Times",
+            "Ids",
+            "Alphas",
+            "Angular_Velocity",
+            "Unwrapped_Positions",
+            "Magnetic_field",
+            "Time_to_keep",
+        ]
 
         # create datasets with 3 dimension regardless of data dimension to make
         # data handling easier later
@@ -327,25 +333,26 @@ class GauravSim(Engine):
                     dtype=float,
                     **dataset_kwargs,
                 )
-                
+
             action_group = h5_outfile.require_group("actions")
             action_group.require_dataset(
                 "Magnetic_field",
-                shape=(0,2),
-                maxshape=(None,2),
+                shape=(0, 2),
+                maxshape=(None, 2),
                 dtype=float,
                 **dataset_kwargs,
-            )    
+            )
             action_group.require_dataset(
                 "Time_to_keep",
-                shape=(0,1),
-                maxshape=(None,1),
+                shape=(0, 1),
+                maxshape=(None, 1),
                 dtype=float,
                 **dataset_kwargs,
-            )    
+            )
 
-
-    def write_to_h5(self, traj_state_flat: np.array, times: np.array, action: MPIAction):
+    def write_to_h5(
+        self, traj_state_flat: np.array, times: np.array, action: MPIAction
+    ):
         # traj_state_flat.shape = (n_part*3, n_snapshots)
         n_new_snapshots = len(times)
         num_particles = traj_state_flat.shape[0] // 3
@@ -353,15 +360,17 @@ class GauravSim(Engine):
         traj_state_h5format = np.reshape(
             traj_state_h5format, (n_new_snapshots, num_particles, 3)
         )
-        
+
         # add dimensions to low-dim arrays
         write_chunk = {
             "Times": times[:, None, None],
-            "Ids": np.repeat(np.arange(num_particles)[None, :], n_new_snapshots, axis=0)[
-                :, :, None
-            ],
+            "Ids": np.repeat(
+                np.arange(num_particles)[None, :], n_new_snapshots, axis=0
+            )[:, :, None],
             "Alphas": traj_state_h5format[:, :, 2][:, :, None],
-            "Angular_Velocity": np.array([r.rotational_velocity for r in self.colloids])[None, :, None],
+            "Angular_Velocity": np.array(
+                [r.rotational_velocity for r in self.colloids]
+            )[None, :, None],
             "Unwrapped_Positions": traj_state_h5format[:, :, :2],
         }
         action_chunk = {
@@ -379,7 +388,7 @@ class GauravSim(Engine):
                     n_snapshots_old : n_snapshots_old + n_new_snapshots,
                     ...,
                 ] = values
-                
+
             action_group = h5_outfile["actions"]
             for key, values in action_chunk.items():
                 dataset = action_group[key]
@@ -552,14 +561,18 @@ class GauravSim(Engine):
                 # eq. 31
                 if r_ij_norm < 2 * self.params.raft_radius:
                     logger.warning("removing overlapp, might cause softlock")
-                    for k in range(1,10):
+                    for k in range(1, 10):
                         for j in range(n_rafts):
                             for i in range(j):
-                                r_ij = state[j,:2] - state[i,:2]
-                                r_ij_dist = np.linalg.norm(r_ij) + 1E-6
+                                r_ij = state[j, :2] - state[i, :2]
+                                r_ij_dist = np.linalg.norm(r_ij) + 1e-6
                                 if r_ij_dist < 2 * self.params.raft_radius:
-                                    state[i,:2] = state[i,:2] - 1.01 * r_ij * (self.params.raft_radius/r_ij_dist-1/2)
-                                    state[j,:2] = state[j,:2] + 1.01 * r_ij * (self.params.raft_radius/r_ij_dist-1/2)
+                                    state[i, :2] = state[i, :2] - 1.01 * r_ij * (
+                                        self.params.raft_radius / r_ij_dist - 1 / 2
+                                    )
+                                    state[j, :2] = state[j, :2] + 1.01 * r_ij * (
+                                        self.params.raft_radius / r_ij_dist - 1 / 2
+                                    )
                                     # print(f"before {np.linalg.norm(r_ij)}, after {np.linalg.norm(state[j,:2] - state[i,:2])}")
                 torque_dipole_dipole = (
                     self.params.magnetic_constant
@@ -717,7 +730,7 @@ class GauravSim(Engine):
 
     def integrate(self, n_slices: int, model: GlobalForceFunction):
         if not self.integration_initialised:
-            self.time = 0.0 
+            self.time = 0.0
             self.slice_idx = 0
             if self.save_h5:
                 self._init_h5_output()
@@ -729,7 +742,7 @@ class GauravSim(Engine):
             return self.get_rhs(t, state)
 
         state_flat = self._get_state_from_rafts().flatten()
-        self.remove_overlapp(state_flat.reshape((-1,3)))
+        self.remove_overlapp(state_flat.reshape((-1, 3)))
         n_snapshots_per_slice = int(
             round(self.params.time_slice / self.params.snapshot_interval)
         )
@@ -741,9 +754,11 @@ class GauravSim(Engine):
                 raise ValueError("Model must be of type GlobalForceFunction")
 
             action_calculation_time = time.time()
-            self.current_action = self.convert_actions_to_sim_units(model.calc_action(self.colloids))
+            self.current_action = self.convert_actions_to_sim_units(
+                model.calc_action(self.colloids)
+            )
             self.params.time_slice = self.current_action.keep_magnetic_field
-            self.params.time_step = self.params.time_slice/10
+            self.params.time_step = self.params.time_slice / 10
             logger.debug(f"{self.current_action=}")
             integration_start_time = time.time()
             self.old_time = self.time
@@ -751,7 +766,7 @@ class GauravSim(Engine):
                 rhs,
                 (self.time, self.time + self.params.time_slice),
                 state_flat,
-                t_eval=np.linspace(self.time, self.time+self.params.time_slice, 2),
+                t_eval=np.linspace(self.time, self.time + self.params.time_slice, 2),
                 method="RK23",
                 first_step=self.params.time_step,
                 max_step=self.params.time_step,
@@ -767,23 +782,28 @@ class GauravSim(Engine):
             if self.save_h5:
                 self.write_to_h5(sol.y[:, 0:1], sol.t[0:1], self.current_action)
                 model.save_agents()
-            logger.debug(f"{(i+1)/n_slices * 100}% completed, \n calc act {integration_start_time - action_calculation_time}, integration {saving_time_start-integration_start_time}, saving {time.time()-saving_time_start}")
-            self.time = self.time+self.params.time_slice  # sol.t[-1]
+            logger.debug(
+                f"{(i+1)/n_slices * 100}% completed, \n calc act {integration_start_time - action_calculation_time}, integration {saving_time_start-integration_start_time}, saving {time.time()-saving_time_start}"
+            )
+            self.time = self.time + self.params.time_slice  # sol.t[-1]
             state_flat = sol.y[:, -1]
             state = state_flat.reshape((-1, 3))
-            state[:, :2] = np.clip(state[:, :2], 0, self.params.box_length)    
+            state[:, :2] = np.clip(state[:, :2], 0, self.params.box_length)
             self._update_rafts_from_state(state)
-                
+
     def convert_actions_to_sim_units(self, action: np.ndarray) -> MPIAction:
         Q_ = self.params.ureg.Quantity
-        return MPIAction(magnetic_field=Q_(action[:2], "G").m_as("sim_magnetic_field"), keep_magnetic_field=action[2])
+        return MPIAction(
+            magnetic_field=Q_(action[:2], "G").m_as("sim_magnetic_field"),
+            keep_magnetic_field=action[2],
+        )
 
     def remove_overlapp(self, state):
-        for k in range(1,10):
+        for k in range(1, 10):
             for j in range(len(state)):
                 for i in range(j):
-                    r_ij = state[j,:2] - state[i,:2]
-                    if np.linalg.norm(r_ij) < self.params.raft_radius*2:
-                        state[i,:2] = state[i,:2] - r_ij/5
-                        state[j,:2] = state[j,:2] + r_ij/5
+                    r_ij = state[j, :2] - state[i, :2]
+                    if np.linalg.norm(r_ij) < self.params.raft_radius * 2:
+                        state[i, :2] = state[i, :2] - r_ij / 5
+                        state[j, :2] = state[j, :2] + r_ij / 5
                         # print(f"before {np.linalg.norm(r_ij)}, after {np.linalg.norm(state[j,:2] - state[i,:2])}")

@@ -103,7 +103,9 @@ class GauravExperiment(Engine):
             elapsed_time = time.time() - start_time
             self.message_to_publish = "R_{:.6f}".format(time.time()).encode("utf-8")
             time.sleep(max(0, (1 / self.update_rate) - elapsed_time))
-
+    def finalize(self):
+        self.stop_publishing()
+        return super().finalize()
     def stop_publishing(self):
         """Stop the publishing thread and close connections."""
         self.keep_publishing.clear()

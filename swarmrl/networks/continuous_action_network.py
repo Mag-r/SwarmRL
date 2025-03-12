@@ -70,6 +70,7 @@ class ContinuousActionModel(Network, ABC):
         """
         if rng_key is None:
             rng_key = onp.random.randint(0, 1027465782564)
+        self.rng_key_sampling_strategy = jax.random.PRNGKey(rng_key)
         self.sampling_strategy = sampling_strategy
         self.model = flax_model
 
@@ -118,7 +119,6 @@ class ContinuousActionModel(Network, ABC):
             np.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
-            np.ones(list([self.input_shape[0], self.action_dimension])),
         )["params"]
         model_summary = self.model.tabulate(
             jax.random.PRNGKey(1),
@@ -126,7 +126,6 @@ class ContinuousActionModel(Network, ABC):
             np.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
-            np.ones(list([self.input_shape[0], self.action_dimension])),
         )
         print(model_summary)
         *_, self.carry = self.model.apply(
@@ -135,7 +134,6 @@ class ContinuousActionModel(Network, ABC):
             np.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
-            np.ones(list([self.input_shape[0], self.action_dimension])),
             self.carry,
         )
         self.carry = np.array([self.carry[0][0], self.carry[1][0]])
@@ -170,17 +168,18 @@ class ContinuousActionModel(Network, ABC):
         # Logging for grads and pre-train model state
         logger.debug(f"{grads=}")
         logger.debug(f"{self.model_state=}")
-
         if isinstance(self.optimizer, dict):
-            pass
-
+            raise NotImplementedError
         else:
             self.model_state = self.model_state.apply_gradients(grads=grads)
 
         # Logging for post-train model state
         logger.debug(f"{self.model_state=}")
-        logger.debug(f"Model updated")
+        logger.debug("Model updated")
         self.epoch_count += 1
+
+    def split_rng_key(self):
+        self.rng_key_sampling_strategy, _ = jax.random.split(self.rng_key_sampling_strategy)
 
     def compute_action_training(
         self,
@@ -207,42 +206,39 @@ class ContinuousActionModel(Network, ABC):
                 output neurons. The second element is an array of the corresponding
                 log_probs (i.e. the output of the network put through a softmax).
         """
+        subkey = jax.random.fold_in(self.rng_key_sampling_strategy, self.epoch_count)
         try:
-            logits, _, _, _ = self.apply_fn(
+            logits, _ = self.apply_fn(
                 {"params": params},
                 np.array(observables),
                 np.array(previous_actions),
-                None,
                 carry,
             )
         except AttributeError:  # We need this for loaded models.
-            logits, _, _, _ = self.apply_fn(
+            logits, _ = self.apply_fn(
                 {"params": self.model_state["params"]},
                 np.array(observables),
                 np.array(previous_actions),
-                None,
                 carry,
             )
-        action, log_probs = self.sampling_strategy(
-            logits, self.action_dimension, calculate_log_probs=True
-        )
+        action, log_probs = self.sampling_strategy(logits, subkey=subkey, calculate_log_probs=True)
         return action, log_probs
 
     def compute_action(self, observables, previous_actions):
+        subkey = jax.random.fold_in(self.rng_key_sampling_strategy, self.epoch_count)
+
         try:
-            logits, _, _, self.carry = self.apply_fn(
+            logits, self.carry = self.apply_fn(
                 {"params": self.model_state.params},
                 np.array(observables),
                 np.array(previous_actions),
-                None,
                 self.carry,
             )
         except AttributeError:
-            logits, _, _, self.carry = self.apply_fn(
+            logits, self.carry = self.apply_fn(
                 {"params": self.model_state["params"]},
                 np.array(observables),
                 np.array(previous_actions),
-                None,
                 self.carry,
             )
         self.carry = np.array(
@@ -254,57 +250,10 @@ class ContinuousActionModel(Network, ABC):
         self.carry = tuple(np.expand_dims(self.carry, axis=1))
         logits = logits.squeeze()
         action, _ = self.sampling_strategy(
-            logits[np.newaxis, :], self.action_dimension, calculate_log_probs=False
+            logits[np.newaxis, :], subkey=subkey, calculate_log_probs=False
         )
         # action = self.exploration_policy(action)
         return action
-
-    def compute_q_values(
-        self,
-        params: FrozenDict,
-        observables: np.ndarray,
-        actions: np.ndarray,
-        previous_actions: np.ndarray,
-        carry: np.ndarray,
-    ):
-        """
-        Compute the q-value of the network.
-
-        Parameters
-        ----------
-        observables : np.ndarray (n_agents, observable_dimension)
-                Observable for each colloid for which the action should be computed.
-        actions : np.ndarray (n_agents, action_dimension)
-                Actions taken by the agent.
-        carry : np.ndarray
-                Carry state of the model.
-
-        Returns
-        -------
-        tuple : (np.ndarray, np.ndarray)
-                The first element is an array of indices corresponding to the action
-                taken by the agent. The value is bounded between 0 and the number of
-                output neurons. The second element is an array of the corresponding
-                log_probs (i.e. the output of the network put through a softmax).
-        """
-        try:
-            _, first_q_values, second_q_values, _ = self.apply_fn(
-                {"params": params},
-                np.array(observables),
-                np.array(previous_actions),
-                np.array(actions),
-                carry,
-            )
-        except AttributeError:
-            _, first_q_values, second_q_values, _ = self.apply_fn(
-                {"params": self.model_state["params"]},
-                np.array(observables),
-                np.array(previous_actions),
-                np.array(actions),
-                carry,
-            )
-
-        return first_q_values, second_q_values
 
     def export_model(self, filename: str = "model", directory: str = "Models"):
         """
@@ -324,11 +273,10 @@ class ContinuousActionModel(Network, ABC):
         opt_step = self.model_state.step
         epoch = self.epoch_count
         carry = self.carry
-
         os.makedirs(directory, exist_ok=True)
 
         with open(directory + "/" + filename + ".pkl", "wb") as f:
-            pickle.dump((model_params, opt_state, opt_step, epoch, carry, temp), f)
+            pickle.dump((model_params, opt_state, opt_step, epoch, carry), f)
 
     def restore_model_state(self, filename: str = "model", directory: str = "Models"):
         """
@@ -352,6 +300,8 @@ class ContinuousActionModel(Network, ABC):
         self.model_state = self.model_state.replace(
             params=model_params, opt_state=opt_state, step=opt_step
         )
+        logger.info(self.model_state.params.keys())
+
         self.epoch_count = epoch
         # self.carry = carry
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
@@ -376,7 +326,6 @@ class ContinuousActionModel(Network, ABC):
                 Output of the network.
         """
         raise NotImplementedError
-
 
     def get_exp_temperature(self):
         """

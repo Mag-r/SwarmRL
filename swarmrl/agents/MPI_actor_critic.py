@@ -30,13 +30,14 @@ class MPIActorCriticAgent(Agent):
     def __init__(
         self,
         particle_type: int,
-        network: Network,
-        target_network: Network,
+        actor_network: Network,
+        critic_network: Network,
         task: Task,
         observable: Observable,
         loss: Loss = GlobalPolicyGradientLoss(),
         train: bool = True,
         intrinsic_reward: IntrinsicReward = None,
+        max_samples_in_trajectory: int = 200,
     ):
         """
         Constructor for the actor-critic protocol.
@@ -57,8 +58,8 @@ class MPIActorCriticAgent(Agent):
                 Intrinsic reward to use for the agent.
         """
         # Properties of the agent.
-        self.network = network
-        self.target_network = target_network
+        self.actor_network = actor_network
+        self.critic_network = critic_network
         self.particle_type = particle_type
         self.task = task
         self.observable = observable
@@ -68,6 +69,7 @@ class MPIActorCriticAgent(Agent):
 
         # Trajectory to be updated.
         self.trajectory = GlobalTrajectoryInformation()
+        self.max_samples_in_trajectory = max_samples_in_trajectory
         # self.trajectory.actions = np.array([0,0,0.1])
         # self.trajectory.actions = np.expand_dims(self.trajectory.actions, axis=0)
 
@@ -101,17 +103,18 @@ class MPIActorCriticAgent(Agent):
         # Compute loss for actor and critic.
         logger.debug("Computing loss.")
         self.loss.compute_loss(
-            network=self.network,
-            target_network=self.target_network,
+            actor_network=self.actor_network,
+            critic_network=self.critic_network,
             episode_data=self.trajectory,
         )
+        self.actor_network.split_rng_key()
         logger.debug("Loss computed.")
         # Update the intrinsic reward if set.
         if self.intrinsic_reward:
             self.intrinsic_reward.update(self.trajectory)
 
         # Reset the trajectory storage.
-        self.remove_old_data(self.trajectory.features.shape[1] - 240)
+        self.remove_old_data(self.trajectory.features.shape[1] - self.max_samples_in_trajectory)
         logger.debug(
             f"Shape of all saved properties in trajectory {np.array(self.trajectory.features).shape=}, {np.array(self.trajectory.actions).shape=}, {np.array(self.trajectory.rewards).shape=}, {np.array(self.trajectory.carry).shape=}, {np.array(self.trajectory.next_features).shape=}, {np.array(self.trajectory.next_carry).shape=}, {np.array(self.trajectory.action_sequence).shape=}"
         )
@@ -193,7 +196,7 @@ class MPIActorCriticAgent(Agent):
         """
         Initialize all of the models in the gym.
         """
-        self.network.reinitialize_network()
+        self.actor_network.reinitialize_network()
         self.target_network.reinitialize_network()
 
     def save_agent(self, directory: str = "Models"):
@@ -205,7 +208,7 @@ class MPIActorCriticAgent(Agent):
         directory : str
                 Location to save the models.
         """
-        self.network.export_model(
+        self.actor_network.export_model(
             filename=f"{self.__name__()}_{self.particle_type}", directory=directory
         )
         self.target_network.export_model(
@@ -217,7 +220,7 @@ class MPIActorCriticAgent(Agent):
         """
         Restore the agent state from a directory.
         """
-        self.network.restore_model_state(
+        self.actor_network.restore_model_state(
             filename=f"{self.__name__()}_{self.particle_type}", directory=directory
         )
         self.target_network.restore_model_state(
@@ -260,29 +263,30 @@ class MPIActorCriticAgent(Agent):
         state_description, latest_observation = self.state_description(colloids)
         if colloids is None:
             colloids = latest_observation  # For experiments without colloids.
-        previous_carry = self.network.carry
+        previous_carry = self.actor_network.carry
         previous_actions = self.assemble_previous_actions()
-        previous_actions = np.expand_dims(previous_actions, axis=0)
-        action = self.network.compute_action(
+
+        action = self.actor_network.compute_action(
             observables=np.array(state_description),
             previous_actions=np.array(previous_actions),
-        )[np.shape(state_description)[0] - 1]
-        next_carry = self.network.carry
+        )[np.newaxis, np.shape(state_description)[0] - 1]
+        next_carry = self.actor_network.carry
         # Update the trajectory information.
         if self.train:
             self.trajectory.feature_sequence.append(state_description)
             self.trajectory.carry.append(previous_carry)
+
             previous_actions = np.append(
-                previous_actions, np.expand_dims(action, axis=(0, 1)), axis=1
+                previous_actions, np.expand_dims(action, axis=(0)), axis=1
             )
             previous_actions = np.squeeze(previous_actions)
             self.trajectory.action_sequence.append(previous_actions)
             self.trajectory.actions = (
                 np.append(
-                    self.trajectory.actions, np.expand_dims(action, axis=0), axis=0
+                    self.trajectory.actions, action, axis=0
                 )
                 if self.trajectory.actions.size > 0
-                else np.expand_dims(action, axis=0)
+                else action
             )
 
             self.trajectory.killed = self.task.kill_switch
@@ -290,29 +294,30 @@ class MPIActorCriticAgent(Agent):
                 self.trajectory.next_features.append(state_description)
                 self.trajectory.next_carry.append(next_carry)
         self.kill_switch = self.task.kill_switch
-        return action
+        return np.squeeze(action)
 
     def assemble_previous_actions(self):
-        if self.trajectory.actions.shape[0] >= self.network.sequence_length:
-            previous_actions = self.trajectory.actions[-self.network.sequence_length :]
+        if self.trajectory.actions.shape[0] >= self.actor_network.sequence_length:
+            previous_actions = self.trajectory.actions[-self.actor_network.sequence_length :]
         else:
             previous_actions = (
                 self.trajectory.actions[:]
                 if self.trajectory.actions.shape[0] > 0
-                else np.array([0, 0, 0.1])[np.newaxis, :]
+                else np.zeros(self.actor_network.action_dimension)[np.newaxis, :]
             )
+
             previous_actions = np.concatenate(
                 [
                     np.repeat(
                         previous_actions[0:1],
-                        self.network.sequence_length - previous_actions.shape[0],
+                        self.actor_network.sequence_length - previous_actions.shape[0],
                         axis=0,
                     ),
                     previous_actions,
                 ],
                 axis=0,
             )
-        return previous_actions
+        return np.expand_dims(previous_actions, axis=0)  # Add batch dimension
 
     def state_description(self, colloids):
         latest_observable = self.observable.compute_observable(colloids)
@@ -324,9 +329,9 @@ class MPIActorCriticAgent(Agent):
                 self.trajectory.features, latest_observable, axis=1
             )
 
-        if self.trajectory.features.shape[1] >= self.network.sequence_length:
+        if self.trajectory.features.shape[1] >= self.actor_network.sequence_length:
             state_description = self.trajectory.features[
-                :, -self.network.sequence_length :
+                :, -self.actor_network.sequence_length :
             ]
         else:
             state_description = self.trajectory.features[:]
@@ -334,7 +339,7 @@ class MPIActorCriticAgent(Agent):
                 [
                     np.repeat(
                         state_description[:, 0:1],
-                        self.network.sequence_length - state_description.shape[1],
+                        self.actor_network.sequence_length - state_description.shape[1],
                         axis=1,
                     ),
                     state_description,
