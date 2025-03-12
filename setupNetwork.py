@@ -32,28 +32,28 @@ class ActorNet(nn.Module):
     @nn.compact
     def __call__(self, x, previous_actions, carry=None):
         batch_size, sequence_length = x.shape[0], x.shape[1]
-        x = nn.Conv(features=32, kernel_size=(8, 8), strides=(4, 4))(x)
+        x = nn.Conv(features=16, kernel_size=(8, 8), strides=(4, 4))(x)
         x = nn.relu(x)
         x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
 
-        x = nn.Conv(features=64, kernel_size=(4, 4), strides=(2, 2))(x)
+        x = nn.Conv(features=32, kernel_size=(4, 4), strides=(2, 2))(x)
         x = nn.relu(x)
         x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
 
-        x = nn.Conv(features=64, kernel_size=(3, 3), strides=(1, 1))(x)
+        x = nn.Conv(features=32, kernel_size=(3, 3), strides=(2, 2))(x)
         x = nn.relu(x)
         x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
 
         x = x.reshape((batch_size, sequence_length, -1))
 
-        # x = jnp.concatenate([x, previous_actions], axis=-1)
+        x = jnp.concatenate([x, previous_actions], axis=-1)
         # Initialize carry if it's not provided
         if carry is None:
             carry = self.lstm.initialize_carry(
                 jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
             )
             print("Action Net: new carry initialized")
-        # carry, x = self.lstm(carry, x)
+        carry, x = self.lstm(carry, x)
         x = x.reshape((batch_size, -1))
 
         actor = nn.Dense(features=256, name="Actor_1")(x)
@@ -80,26 +80,28 @@ class CriticNet(nn.Module):
     def __call__(self, x, previous_actions, action, carry=None):
         batch_size, sequence_length = x.shape[0], x.shape[1]
 
-        x = nn.Conv(features=32, kernel_size=(8, 8), strides=(4, 4))(x)
+        x = nn.Conv(features=16, kernel_size=(8, 8), strides=(4, 4))(x)
         x = nn.relu(x)
         x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
 
-        x = nn.Conv(features=64, kernel_size=(4, 4), strides=(2, 2))(x)
+        x = nn.Conv(features=32, kernel_size=(4, 4), strides=(2, 2))(x)
         x = nn.relu(x)
         x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
 
-        x = nn.Conv(features=64, kernel_size=(3, 3), strides=(1, 1))(x)
+        x = nn.Conv(features=32, kernel_size=(3, 3), strides=(2, 2))(x)
         x = nn.relu(x)
         x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
 
-        # x = jnp.concatenate([x, previous_actions], axis=-1)
+        x = x.reshape((batch_size, sequence_length, -1))
+
+        x = jnp.concatenate([x, previous_actions], axis=-1)
         # Initialize carry if it's not provided
         if carry is None:
             carry = self.lstm.initialize_carry(
                 jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
             )
             print("Action Net: new carry initialized")
-        # carry, x = self.lstm(carry, x)
+        carry, x = self.lstm(carry, x)
         x = x.reshape((batch_size, -1))
         x = jnp.concatenate([x, action], axis=-1)
 
@@ -126,7 +128,7 @@ def defineRLAgent(
         decay_rate=0.95,
         staircase=True,
     )
-    optimizer = optax.inject_hyperparams(optax.adam)(learning_rate=lr_schedule, eps=1e-7)
+    optimizer = optax.inject_hyperparams(optax.adam)(learning_rate=lr_schedule)
 
     actor = ActorNet()
     critic = CriticNet()
