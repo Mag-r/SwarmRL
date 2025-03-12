@@ -37,7 +37,7 @@ class CarBenchmark(Engine):
         obs, *_ = self.env.step(np.array([0, 1, 0]))
         reward_sum = 0
         for i in range(n_slices):
-            action = np.array(force_model.calc_action(obs))
+            action = np.squeeze(np.array(force_model.calc_action(obs)))
             reward = 0
             for _ in range(3):
                 _, r, *_, terminated = self.env.step(action)
