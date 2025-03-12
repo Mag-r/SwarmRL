@@ -24,7 +24,7 @@ logging.basicConfig(
 )
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-sequence_length = 4
+sequence_length = 2
 resolution = 506
 action_dimension = 3
 number_particles = 7

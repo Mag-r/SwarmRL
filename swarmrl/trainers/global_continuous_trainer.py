@@ -6,6 +6,17 @@ import numpy as np
 from rich.progress import BarColumn, Progress, TimeRemainingColumn
 from typing import List, Tuple
 import logging
+import queue
+import cloudpickle
+import pickle
+import jax
+import os
+
+pickle.Pickler = cloudpickle.Pickler
+import multiprocessing as mp
+
+mp.reduction.ForkingPickler = cloudpickle.Pickler
+
 
 from swarmrl.engine.engine import Engine
 from swarmrl.trainers.trainer import Trainer
@@ -13,6 +24,18 @@ from swarmrl.force_functions.global_force_fn import GlobalForceFunction
 from swarmrl.agents.MPI_actor_critic import MPIActorCriticAgent
 
 logger = logging.getLogger(__name__)
+
+
+def worker_run(engine: Engine, force_fn, _q: mp.Queue):
+    logger.info("Worker started.")
+    while True:
+        try:
+            _q.get(block=True, timeout=0)
+            logger.info("Worker ended.")
+            return
+        except queue.Empty:
+            engine.integrate(1, force_fn)
+
 
 class GlobalContinuousTrainer(Trainer):
     """
@@ -47,7 +70,11 @@ class GlobalContinuousTrainer(Trainer):
 
         for agent in self.agents.values():
             if isinstance(agent, MPIActorCriticAgent):
+                logger.info(
+                    f"Current learning_rate is {agent.actor_network.model_state.opt_state.hyperparams['learning_rate']}"
+                )
                 ag_reward, ag_killed = agent.update_agent()
+                # logger.info(f"reward: {ag_reward}, sum: {np.sum(ag_reward)}")
                 reward += np.mean(ag_reward)
                 switches.append(ag_killed)
             else:
@@ -56,6 +83,7 @@ class GlobalContinuousTrainer(Trainer):
         # Create a new interaction model.
         interaction_model = GlobalForceFunction(agents=self.agents)
         logger.debug("RL updated.")
+        # interaction_model.save_agents()
         return interaction_model, np.array(reward), any(switches)
 
     def perform_rl_training(
@@ -83,9 +111,11 @@ class GlobalContinuousTrainer(Trainer):
         rewards = [0.0]
         current_reward = 0.0
         episode = 0
+        # mp.set_start_method('spawn', force=True)
+
         force_fn = self.initialize_training()
 
-        # Initialize the tasks and observables. 
+        # Initialize the tasks and observables.
         for agent in self.agents.values():
             agent.reset_agent(self.engine.colloids)
 
@@ -108,12 +138,20 @@ class GlobalContinuousTrainer(Trainer):
             )
             try:
                 for _ in range(n_episodes):
+
                     self.engine.integrate(episode_length, force_fn)
+                    # mp.set_start_method('spawn', force=True)
+                    # q = mp.Queue(maxsize=1)
+                    # p = mp.Process(target=worker_run, args=(self.engine, force_fn, q))
+                    # p.start()
+                    # logger.info(jax.devices())
                     force_fn, current_reward, killed = self.update_rl()
+                    # q.put(True)
+                    # p.join()
 
                     if killed:
                         print("Simulation has been ended by the task, ending training.")
-                        system_runner.finalize()
+                        self.engine.finalize()
                         break
 
                     rewards.append(current_reward)
@@ -128,6 +166,7 @@ class GlobalContinuousTrainer(Trainer):
                         current_reward=np.round(current_reward, 2),
                         running_reward=np.round(np.mean(rewards[-10:]), 2),
                     )
+                
             finally:
                 self.engine.finalize()
 
