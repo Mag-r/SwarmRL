@@ -18,6 +18,8 @@ from swarmrl.networks.network import Network
 from swarmrl.observables.observable import Observable
 from swarmrl.tasks.task import Task
 from swarmrl.utils.colloid_utils import GlobalTrajectoryInformation
+import os
+import pickle
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +116,9 @@ class MPIActorCriticAgent(Agent):
             self.intrinsic_reward.update(self.trajectory)
 
         # Reset the trajectory storage.
-        self.remove_old_data(self.trajectory.features.shape[1] - self.max_samples_in_trajectory)
+        self.remove_old_data(
+            self.trajectory.features.shape[1] - self.max_samples_in_trajectory
+        )
         logger.debug(
             f"Shape of all saved properties in trajectory {np.array(self.trajectory.features).shape=}, {np.array(self.trajectory.actions).shape=}, {np.array(self.trajectory.rewards).shape=}, {np.array(self.trajectory.carry).shape=}, {np.array(self.trajectory.next_features).shape=}, {np.array(self.trajectory.next_carry).shape=}, {np.array(self.trajectory.action_sequence).shape=}"
         )
@@ -142,6 +146,35 @@ class MPIActorCriticAgent(Agent):
         """
         self.task.kill_switch = False  # Reset here.
         self.trajectory = GlobalTrajectoryInformation()
+
+    def save_trajectory(
+        self, directory: str = "training_data", name: str = "trajectory"
+    ):
+        """
+        Save the trajectory of the agent.
+
+        Parameters
+        ----------
+        directory : str
+                Location to save the trajectory.
+        """
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        trajectory_data = {
+            "features": self.trajectory.features,
+            "actions": self.trajectory.actions,
+            "rewards": self.trajectory.rewards,
+            "carry": self.trajectory.carry,
+            "next_features": self.trajectory.next_features,
+            "next_carry": self.trajectory.next_carry,
+            "action_sequence": self.trajectory.action_sequence,
+            "killed": self.trajectory.killed,
+        }
+
+        filename = os.path.join(directory, f"{name}.pkl")
+        with open(filename, "wb") as f:
+            pickle.dump(trajectory_data, f)
 
     def remove_old_data(self, remove: int):
         """Remove old data from the trajectory. The last 10 are always kept.
@@ -282,9 +315,7 @@ class MPIActorCriticAgent(Agent):
             previous_actions = np.squeeze(previous_actions)
             self.trajectory.action_sequence.append(previous_actions)
             self.trajectory.actions = (
-                np.append(
-                    self.trajectory.actions, action, axis=0
-                )
+                np.append(self.trajectory.actions, action, axis=0)
                 if self.trajectory.actions.size > 0
                 else action
             )
@@ -298,7 +329,9 @@ class MPIActorCriticAgent(Agent):
 
     def assemble_previous_actions(self):
         if self.trajectory.actions.shape[0] >= self.actor_network.sequence_length:
-            previous_actions = self.trajectory.actions[-self.actor_network.sequence_length :]
+            previous_actions = self.trajectory.actions[
+                -self.actor_network.sequence_length :
+            ]
         else:
             previous_actions = (
                 self.trajectory.actions[:]

@@ -83,7 +83,7 @@ class GlobalContinuousTrainer(Trainer):
         # Create a new interaction model.
         interaction_model = GlobalForceFunction(agents=self.agents)
         logger.debug("RL updated.")
-        # interaction_model.save_agents()
+
         return interaction_model, np.array(reward), any(switches)
 
     def perform_rl_training(
@@ -166,7 +166,12 @@ class GlobalContinuousTrainer(Trainer):
                         current_reward=np.round(current_reward, 2),
                         running_reward=np.round(np.mean(rewards[-10:]), 2),
                     )
-                
+                    if episode % 10 == 0:
+                        # Save the agents every 10 episodes.
+                        for agent in self.agents.values():
+                            agent.save_trajectory()
+                            agent.save_agent()
+
             finally:
                 self.engine.finalize()
 
