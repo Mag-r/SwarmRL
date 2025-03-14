@@ -54,8 +54,8 @@ model_state = model_state.replace(
 
 # %%
 
-input_data = plt.imread("unlabeled_images_for_train/images/camera_image_0000.png")
-input_data = input_data[::2,::2,0]
+input_data = plt.imread("../images/camera_image_0495.png")
+input_data = input_data[::1,::1,0]
 print(input_data.shape)
 # input_data = cv2.resize(input_data, (size,size))
 
@@ -64,7 +64,8 @@ std = np.std(input_data)
 input_data = (input_data - mean) / std
 input_data = np.expand_dims(input_data, axis=-1)
 fig, ax = plt.subplots(1,3)
-ax[0].imshow(input_data, cmap='gray')
+plt.figure()
+plt.imshow(input_data, cmap='gray')
 
 
 
@@ -72,9 +73,10 @@ start = time.time()
 # thresholded_image = (input_data > 1.9).astype(np.float32)
 # ax[1].imshow(thresholded_image.reshape(size,size, 1), cmap='gray')
 cleaned_image = model.apply(model_state.params, input_data.reshape(1, size, size, 1))
-cleaned_image = cleaned_image > 0.9
+cleaned_image = cleaned_image > 0.8
 cleaned_image = np.squeeze(cleaned_image)
-ax[1].imshow(cleaned_image[:,:], cmap='gray')
+plt.figure()
+plt.imshow(cleaned_image[:,:], cmap='gray')
 cleaned_image = cleaned_image[:,:]
 image = np.array(cleaned_image*255, dtype=np.uint8) 
 # params = cv2.SimpleBlobDetector_Params()
@@ -93,38 +95,25 @@ image = np.array(cleaned_image*255, dtype=np.uint8)
 # keypoints = detector.detect(image.astype(np.uint8))
 # Find contours
 # Label connected components
-labeled_image, num_features = label(image)
 
-# Find bounding boxes of labeled regions
-objects = find_objects(labeled_image)
-
-# Calculate and print the positions of the objects
-positions = []
-for obj in objects:
-    y, x = obj
-    x_start, x_end = x.start, x.stop
-    y_start, y_end = y.start, y.stop
-    width = x_end - x_start
-    height = y_end - y_start
-    positions.append((x_start, y_start, width, height))
-    print(f"Position: x={x_start}, y={y_start}, width={width}, height={height}")
-    # Draw rectangles around detected objects
-    for pos in positions:
-        x, y, w, h = pos
-        rect = patches.Rectangle((x, y), w, h, linewidth=1, edgecolor='r', facecolor='none')
-        ax[1].add_patch(rect)
 contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-contour_image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+min_area = 0
+print([cv2.arcLength(contour, False) for contour in contours])
+contours = [contour for contour in contours if cv2.arcLength(contour, True) > min_area]
+contour_image = cv2.cvtColor(input_data.squeeze(), cv2.COLOR_GRAY2BGR)
 cv2.drawContours(contour_image, contours, -1, (0, 255, 0), 2)
 
 # Calculate and print the positions of the contours
 positions = [cv2.boundingRect(contour) for contour in contours]
-for pos in positions:
+
+for i, pos in enumerate(positions):
     x, y, w, h = pos
     print(f"Position: x={x}, y={y}, width={w}, height={h}")
 
+print(len(positions))
 # Display the image with contours
-ax[2].imshow(contour_image)
+plt.figure()
+plt.imshow(contour_image)
 # print(len(keypoints))
 print(time.time()-start)
 # image_with_keypoints = cv2.drawKeypoints(image, keypoints, np.array([]), (255, 0, 0), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
@@ -136,3 +125,5 @@ plt.savefig("blob_detection.png")
 
 
 
+
+# %%

@@ -48,13 +48,13 @@ class Autoencoder(nn.Module):
         return nn.sigmoid(x)
 
 
-sequence_length = 2
-resolution = 506
+sequence_length = 3
+resolution = 253
 action_dimension = 3
 number_particles = 7
-learning_rate = 1e-2
+learning_rate = 1e-3
 
-obs = BaslerCameraObservable([resolution, resolution], Autoencoder(), model_path="position_tracking/autoencoder_model/model_trained.pkl")
+obs = BaslerCameraObservable([resolution, resolution], Autoencoder(), model_path="Models/model_trained.pkl")
 task = ExperimentTask(number_particles=number_particles)
 
 ureg = pint.UnitRegistry()
@@ -86,9 +86,9 @@ sim = GauravSim(
 experiment = GauravExperiment(sim)
 
 # %%
-protocol = setupNetwork.defineRLAgent(obs, task, learning_rate=learning_rate)
+protocol = setupNetwork.defineRLAgent(obs, task, learning_rate=learning_rate, sequence_length=sequence_length)
 
-# protocol.restore_agent()
+protocol.restore_agent()
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
-reward = rl_trainer.perform_rl_training(experiment, 10000, 10)
+reward = rl_trainer.perform_rl_training(experiment, 1000, 10)

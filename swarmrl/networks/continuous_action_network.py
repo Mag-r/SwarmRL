@@ -249,6 +249,7 @@ class ContinuousActionModel(Network, ABC):
         )
         self.carry = tuple(np.expand_dims(self.carry, axis=1))
         logits = logits.squeeze()
+        logger.info(f"covariance {np.mean(np.exp(logits[self.action_dimension:]))}")
         action, _ = self.sampling_strategy(
             logits[np.newaxis, :], subkey=subkey, calculate_log_probs=False
         )

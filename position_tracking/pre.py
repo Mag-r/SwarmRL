@@ -86,16 +86,16 @@ def label_images():
     detected_images = []
     detected_centers = []
 
-    for i in tqdm(range(2048)):
+    for i in tqdm(range(171)):
         try:
-            image = cv.imread(f'unlabeled_images_for_train/images/camera_image_{i:04d}.png')
+            image = cv.imread(f'../images/camera_image_{i:04d}.png')
             image = image[:, :, 1]
-            centers, radii, count = find_circles_adaptive(image, 7, [7, 15], top_left_x=150, top_left_y=150, width_x=200, height_y=200, adaptive_thres_blocksize=3, adaptive_thres_const=-3, raft_center_threshold=80, min_sep_dist=14)
+            centers, radii, count = find_circles_adaptive(image, 7, [7, 15], top_left_x=50, top_left_y=50, width_x=100, height_y=100, adaptive_thres_blocksize=3, adaptive_thres_const=-3, raft_center_threshold=80, min_sep_dist=14)
             if count == 7:
                 detected_images.append(image)
                 detected_centers.append(centers)
             else:
-                print(f"Failed to detect 7 rafts in image {i}")
+                print(f"detected {count} particles in image:{i}")
         except:
             print(f"Failed to read image {i}")
     detected_centers = np.array(detected_centers)
@@ -109,4 +109,5 @@ def label_images():
     np.save('detected_centers.npy', detected_centers)
     np.save('detected_images.npy', detected_images)
 
-
+if __name__ == '__main__':
+    label_images()

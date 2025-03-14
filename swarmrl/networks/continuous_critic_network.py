@@ -255,8 +255,8 @@ class ContinuousCriticModel(Network, ABC):
                 in the currently directory, it will be created.
 
         """
-        model_params_critic = self.critic_network.params
-        model_params_target = self.target_network.params
+        model_params_critic = self.critic_state.params
+        model_params_target = self.target_state.params
         opt_state_critic = self.critic_state.opt_state
         opt_state_target = self.target_state.opt_state
         opt_step_critic = self.critic_state.step

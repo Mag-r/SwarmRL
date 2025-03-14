@@ -24,7 +24,7 @@ class ActorNet(nn.Module):
             in_axes=1,
             out_axes=1,
         )
-        self.lstm = self.ScanLSTM(features=24)
+        self.lstm = self.ScanLSTM(features=64)
         temperature = self.param(
             "temperature", lambda key, shape: jnp.full(shape, 0.0), (1,)
         )
@@ -32,17 +32,7 @@ class ActorNet(nn.Module):
     @nn.compact
     def __call__(self, x, previous_actions, carry=None):
         batch_size, sequence_length = x.shape[0], x.shape[1]
-        x = nn.Conv(features=16, kernel_size=(8, 8), strides=(4, 4))(x)
-        x = nn.relu(x)
-        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
-
-        x = nn.Conv(features=32, kernel_size=(4, 4), strides=(2, 2))(x)
-        x = nn.relu(x)
-        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
-
-        x = nn.Conv(features=32, kernel_size=(3, 3), strides=(2, 2))(x)
-        x = nn.relu(x)
-        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
+       
 
         x = x.reshape((batch_size, sequence_length, -1))
 
@@ -56,7 +46,9 @@ class ActorNet(nn.Module):
         carry, x = self.lstm(carry, x)
         x = x.reshape((batch_size, -1))
 
-        actor = nn.Dense(features=256, name="Actor_1")(x)
+        actor = nn.Dense(features=64, name="Actor_1")(x)
+        actor = nn.relu(actor)
+        actor = nn.Dense(features=64, name="Actor_2")(actor)
         actor = nn.relu(actor)
 
         actor = nn.Dense(features=action_dimension * 2, name="Actor_out")(actor)
@@ -74,23 +66,11 @@ class CriticNet(nn.Module):
             in_axes=1,
             out_axes=1,
         )
-        self.lstm = self.ScanLSTM(features=24)
+        self.lstm = self.ScanLSTM(features=64)
 
     @nn.compact
     def __call__(self, x, previous_actions, action, carry=None):
         batch_size, sequence_length = x.shape[0], x.shape[1]
-
-        x = nn.Conv(features=16, kernel_size=(8, 8), strides=(4, 4))(x)
-        x = nn.relu(x)
-        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
-
-        x = nn.Conv(features=32, kernel_size=(4, 4), strides=(2, 2))(x)
-        x = nn.relu(x)
-        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
-
-        x = nn.Conv(features=32, kernel_size=(3, 3), strides=(2, 2))(x)
-        x = nn.relu(x)
-        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
 
         x = x.reshape((batch_size, sequence_length, -1))
 
@@ -105,8 +85,12 @@ class CriticNet(nn.Module):
         x = x.reshape((batch_size, -1))
         x = jnp.concatenate([x, action], axis=-1)
 
-        q_1 = nn.Dense(features=256)(x)
-        q_2 = nn.Dense(features=256)(x)
+        q_1 = nn.Dense(features=64)(x)
+        q_2 = nn.Dense(features=64)(x)
+        q_1 = nn.relu(q_1)
+        q_2 = nn.relu(q_2)
+        q_1 = nn.Dense(features=64)(q_1)
+        q_2 = nn.Dense(features=64)(q_2)
         q_1 = nn.relu(q_1)
         q_2 = nn.relu(q_2)
 
@@ -135,22 +119,22 @@ def defineRLAgent(
     exploration_policy = srl.exploration_policies.GlobalOUExploration(
         drift=0.2, volatility=0.3
     )
+    
 
     # Define a sampling_strategy
     action_limits = jnp.array([[-100,100],[-100,100],[0.01, 4]])
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
 
     value_function = srl.value_functions.TDReturnsSAC(gamma=0.99, standardize=True)
-
+    n_particles = 7
     actor_network = srl.networks.ContinuousActionModel(
         flax_model=actor,
         optimizer=optimizer,
         input_shape=(
             1,
             sequence_length,
-            resolution,
-            resolution,
-            1,
+            n_particles,
+            2,
         ),  # batch implicitly 1 ,time,H,W,channels for conv
         sampling_strategy=sampling_strategy,
         exploration_policy=exploration_policy,
@@ -163,9 +147,8 @@ def defineRLAgent(
         input_shape=(
             1,
             sequence_length,
-            resolution,
-            resolution,
-            1,
+            n_particles,
+            2,
         ),  # batch implicitly 1 ,time,H,W,channels for conv
         action_dimension=action_dimension,
     )
@@ -183,6 +166,6 @@ def defineRLAgent(
         task=task,
         observable=obs,
         loss=loss,
-        max_samples_in_trajectory=100,
+        max_samples_in_trajectory=200,
     )
     return protocol

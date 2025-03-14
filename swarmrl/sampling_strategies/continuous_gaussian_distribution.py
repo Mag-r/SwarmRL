@@ -26,8 +26,8 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
         """
         self.action_dimension = action_dimension
         self.action_limits = action_limits
-        if self.action_limits:
-            assert jnp.shape(self.action_limits) == (self.action_dimension, 2), f"Action limits must have shape ({self.action_dimension}, 2). Has shape {jnp.shape(self.action_limits)}"
+        # if self.action_limits:
+        #     assert jnp.shape(self.action_limits) == (self.action_dimension, 2), f"Action limits must have shape ({self.action_dimension}, 2). Has shape {jnp.shape(self.action_limits)}"
 
     def squash_action(self, action: jnp.ndarray) -> jnp.ndarray:
         """
@@ -73,7 +73,7 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             log_probs = None
         else:
             epsilon = 1e-7
-            diag_cov = jnp.exp(logits[:, self.action_dimension :])/10 + epsilon
+            diag_cov = jnp.exp(logits[:, self.action_dimension :]) + epsilon
             cov_matrices = jnp.vectorize(lambda d: jnp.diag(d), signature="(n)->(n,n)")(
                 diag_cov
             )

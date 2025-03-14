@@ -34,7 +34,7 @@ class ExperimentTask(Task):
         self.old_residual = None
         self.old_angle_error = None
         self.angle_normalization = 1.6
-        self.regression_normalization = 2000
+        self.regression_normalization = 253
 
     def detect_blobs(self, image: np.ndarray) -> np.ndarray:
         image = image[0,:,:,0]
@@ -103,8 +103,8 @@ class ExperimentTask(Task):
         return std_angle
 
     def __call__(self, positions: np.ndarray) -> float:
-        x = positions[:, 0]
-        y = positions[:, 1]
+        x = positions[0, :, 0]
+        y = positions[0, :, 1]
         *_, regression_error = self.orthogonal_regression_svd(x, y)
         regression_error /= self.regression_normalization
         angle_error = self.angle_between_particles(x, y) / self.angle_normalization

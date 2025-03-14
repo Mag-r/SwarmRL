@@ -19,6 +19,7 @@ from pypylon import pylon
 import logging
 from matplotlib import pyplot as plt
 from flax import linen as nn
+import time
 
 from swarmrl.observables.observable import Observable
 
@@ -54,12 +55,13 @@ class BaslerCameraObservable(Observable, ABC):
     }
 
     def __init__(
-        self, resolution: List[int], autoencoder: nn.Module, model_path: str = None
+        self, resolution: List[int], autoencoder: nn.Module, model_path: str = None, number_particles: int = 7
     ):
         """
         Constructor for the observable.
         """
         super().__init__(particle_type=0)  # better way to do this?
+        self.number_particles = number_particles
         self.resolution = resolution
         tlf = pylon.TlFactory.GetInstance()
         detected_cameras = tlf.EnumerateDevices()
@@ -75,20 +77,21 @@ class BaslerCameraObservable(Observable, ABC):
         if self.camera is None or not self.camera.IsPylonDeviceAttached():
             logger.error(f"Camera {self.camParam['camName']} not found.")
             raise Exception(f"Camera {self.camParam['camName']} not found.")
-        if os.path.exists("images"):
-            shutil.rmtree("images")
-        os.makedirs("images")
+        # if os.path.exists("images"):
+        #     shutil.rmtree("images")
+        # os.makedirs("images")
         self.image_queue = queue.Queue()
         self.image_saving_thread = threading.Thread(
             target=self.save_images_async, daemon=True
         )
+        self.image_count = 0
         self.image_saving_thread.start()
         self.autoencoder = autoencoder
         self.init_autoencoder(model_path)
 
     def init_autoencoder(self, model_path: str = None):
         dummy_input = jax.random.normal(
-            jax.random.PRNGKey(0), (1, self.resolution, self.resolution, 1)
+            jax.random.PRNGKey(0), (1, self.resolution[0], self.resolution[1], 1)
         )
         params = self.autoencoder.init(jax.random.PRNGKey(0), dummy_input)
         self.model_state = TrainState.create(
@@ -153,31 +156,53 @@ class BaslerCameraObservable(Observable, ABC):
                 logger.error("Grab failed.")
                 image = np.zeros(self.resolution)
         if self.image_queue.qsize() > 3:
-            self.logger.warning(
+            logger.warning(
                 f"Image queue is starting to fill. Current size {self.image_queue.qsize()}"
             )
         self.image_queue.put(image)
-        self.image_count = self.image_count + 1
         positions = self.extract_positions(image)
+        if positions.shape[1] < self.number_particles:
+            padding = self.number_particles - positions.shape[1]
+            padding = np.zeros((1, padding, 2))
+            positions = np.concatenate((positions, padding), axis=1)
+        elif positions.shape[1] > self.number_particles:
+            positions = positions[:, :self.number_particles, :]
         return positions
 
     def extract_positions(self, image: np.ndarray) -> np.ndarray:
         """
         Extracts the positions of the colloids from the image.
         """
-        image = cv2.resize(image, (1, self.resolution[0], self.resolution[1], 1))
-        cleaned_image = self.model_state.apply(self.model_state.params, image)
-        cleaned_image = cleaned_image > 0.9
+        image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
+        image = np.array(image, dtype=np.float32)
+        image = (image - np.mean(image)) / np.std(image)
+        image = np.reshape(image, (1, self.resolution[0], self.resolution[1], 1))
+        cleaned_image = self.model_state.apply_fn(self.model_state.params, image)
+        cleaned_image = cleaned_image > 0.8
         cleaned_image = np.squeeze(cleaned_image)
-        cleaned = np.array(cleaned_image * 255, dtype=np.uint8)
-        contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        positions = [cv2.boundingRect(contour) for contour in contours]
-        return positions
+        cleaned_image = onp.array(cleaned_image * 255, dtype=onp.uint8)
+
+        contours, _ = cv2.findContours(cleaned_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # contour_image = cv2.cvtColor(cleaned_image, cv2.COLOR_GRAY2BGR)
+        # cv2.drawContours(contour_image, contours, -1, 255, -1)
+        # self.image_queue.put(contour_image)
+        min_length = 0.01
+        contours = [contour for contour in contours if cv2.arcLength(contour, True) > min_length]
+        positions = np.array([cv2.boundingRect(contour) for contour in contours])
+        positions = positions[:, :2] + positions[:, 2:] / 2
+        if len(positions) != self.number_particles:
+            logger.warning(
+                f"Number of particles detected {len(positions)} is not equal to the expected number of particles {self.number_particles}."
+            )
+            
+        return positions.reshape(1,-1, 2)
 
     def save_images_async(self):
         while True:
             if not self.image_queue.empty():
                 image = self.image_queue.get()
-                plt.imsave("images/latest_camera_image.png", image, cmap="gray")
+                plt.imsave(f"images/camera_image_{self.image_count:04d}.png", image, cmap="gray") 
+                plt.imsave(f"images/latest_camera_image.png", image, cmap="gray")
+                self.image_count = self.image_count + 1
             else:
                 threading.Event().wait(0.1)

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6340
+    labview_port = 6342
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  # check with Gaurav
@@ -134,7 +134,7 @@ class GauravExperiment(Engine):
 
     def clip_actions(self, action: MPIAction, max_amplitude: float = 100):
         """Clip the action values."""
-        action.magnetic_field = np.clip(action.magnetic_field, 0, max_amplitude)
+        action.magnetic_field = np.clip(action.magnetic_field, -max_amplitude, max_amplitude)
         return action
 
     def integrate(self, n_slices: int, force_model: GlobalForceFunction):
@@ -145,6 +145,7 @@ class GauravExperiment(Engine):
             action = MPIAction(magnetic_field=action[:2], keep_magnetic_field=action[2])
             action = self.clip_actions(action)
             self.send_action(action)
+            logger.info(f"Action sent: {action}")
             time.sleep(float(action.keep_magnetic_field) * 0.95)
             force_model.calc_reward(self.colloids)
 
