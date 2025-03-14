@@ -10,10 +10,15 @@ import threading
 import shutil
 import jax.numpy as np
 import numpy as onp
+import jax
+from flax.training.train_state import TrainState
+import pickle
+import optax
 import cv2
 from pypylon import pylon
 import logging
 from matplotlib import pyplot as plt
+from flax import linen as nn
 
 from swarmrl.observables.observable import Observable
 
@@ -48,7 +53,9 @@ class BaslerCameraObservable(Observable, ABC):
         "colored": True,
     }
 
-    def __init__(self, resolution: List[int]):
+    def __init__(
+        self, resolution: List[int], autoencoder: nn.Module, model_path: str = None
+    ):
         """
         Constructor for the observable.
         """
@@ -76,6 +83,21 @@ class BaslerCameraObservable(Observable, ABC):
             target=self.save_images_async, daemon=True
         )
         self.image_saving_thread.start()
+        self.autoencoder = autoencoder
+        self.init_autoencoder(model_path)
+
+    def init_autoencoder(self, model_path: str = None):
+        dummy_input = jax.random.normal(
+            jax.random.PRNGKey(0), (1, self.resolution, self.resolution, 1)
+        )
+        params = self.autoencoder.init(jax.random.PRNGKey(0), dummy_input)
+        self.model_state = TrainState.create(
+            apply_fn=self.autoencoder.apply, params=params, tx=optax.adam(0.001)
+        )
+        if model_path:
+            with open(model_path, "rb") as f:
+                model_params = pickle.load(f)
+            self.model_state = self.model_state.replace(params=model_params)
 
     def init_camera(self):
         self.camera.Open()
@@ -136,8 +158,21 @@ class BaslerCameraObservable(Observable, ABC):
             )
         self.image_queue.put(image)
         self.image_count = self.image_count + 1
-        image = np.array(image[np.newaxis, :, :, np.newaxis])
-        return image
+        positions = self.extract_positions(image)
+        return positions
+
+    def extract_positions(self, image: np.ndarray) -> np.ndarray:
+        """
+        Extracts the positions of the colloids from the image.
+        """
+        image = cv2.resize(image, (1, self.resolution[0], self.resolution[1], 1))
+        cleaned_image = self.model_state.apply(self.model_state.params, image)
+        cleaned_image = cleaned_image > 0.9
+        cleaned_image = np.squeeze(cleaned_image)
+        cleaned = np.array(cleaned_image * 255, dtype=np.uint8)
+        contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        positions = [cv2.boundingRect(contour) for contour in contours]
+        return positions
 
     def save_images_async(self):
         while True:

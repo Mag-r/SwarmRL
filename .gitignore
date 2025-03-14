@@ -6,7 +6,7 @@ images
 *.mp4
 SwarmRL/docs/build
 espresso
-*.pkl
+# *.pkl
 /position_tracking
 
 # Byte-compiled / optimized / DLL files

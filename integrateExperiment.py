@@ -5,6 +5,7 @@ import logging
 import setupNetwork
 import os
 import pint
+from flax import linen as nn
 
 from swarmrl.observables.basler_camera_MPI import BaslerCameraObservable
 from swarmrl.tasks.experiment_task import ExperimentTask
@@ -24,13 +25,36 @@ logging.basicConfig(
 )
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
+
+class Autoencoder(nn.Module):
+    @nn.remat
+    @nn.compact
+    def __call__(self, x):
+        # Encoder
+        x = nn.Conv(16, (3, 3), strides=(1, 1), padding="SAME")(x)
+        x = nn.relu(x)
+
+        x = nn.Conv(32, (3, 3), strides=(1, 1), padding="SAME")(x)
+        x = nn.relu(x)
+
+        x = nn.ConvTranspose(32, (3, 3), strides=(1, 1), padding="SAME")(x)
+        x = nn.relu(x)
+
+        x = nn.ConvTranspose(16, (3, 3), strides=(1, 1), padding="SAME")(x)
+        x = nn.relu(x)
+
+        x = nn.Conv(1, (3, 3), strides=(1, 1), padding="SAME")(x)
+
+        return nn.sigmoid(x)
+
+
 sequence_length = 2
 resolution = 506
 action_dimension = 3
 number_particles = 7
 learning_rate = 1e-2
 
-obs = BaslerCameraObservable([resolution, resolution])
+obs = BaslerCameraObservable([resolution, resolution], Autoencoder(), model_path="position_tracking/autoencoder_model/model_trained.pkl")
 task = ExperimentTask(number_particles=number_particles)
 
 ureg = pint.UnitRegistry()

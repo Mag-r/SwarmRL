@@ -242,7 +242,8 @@ class MPIActorCriticAgent(Agent):
                 Location to save the models.
         """
         self.actor_network.export_model(
-            filename=f"{self.__name__()}_{self.particle_type}_actor", directory=directory
+            filename=f"{self.__name__()}_{self.particle_type}_actor",
+            directory=directory,
         )
         self.critic_network.export_model(
             filename=f"{self.__name__()}_{self.particle_type}_critic",
@@ -254,14 +255,17 @@ class MPIActorCriticAgent(Agent):
         Restore the agent state from a directory.
         """
         self.actor_network.restore_model_state(
-            filename=f"{self.__name__()}_{self.particle_type}_actor", directory=directory
+            filename=f"{self.__name__()}_{self.particle_type}_actor",
+            directory=directory,
         )
         self.critic_network.restore_model_state(
             filename=f"{self.__name__()}_{self.particle_type}_critic",
             directory=directory,
         )
-        
-    def calc_reward(self, colloids: typing.List[Colloid], external_reward: float = 0.0) -> float:
+
+    def calc_reward(
+        self, colloids: typing.List[Colloid], external_reward: float = 0.0
+    ) -> float:
         """
         Compute the reward for the agent.
 
@@ -282,14 +286,11 @@ class MPIActorCriticAgent(Agent):
         reward = self.task(colloids)
         reward += external_reward
         if self.intrinsic_reward:
-            reward += self.intrinsic_reward.compute_reward(
-                episode_data=self.trajectory
-            )
+            reward += self.intrinsic_reward.compute_reward(episode_data=self.trajectory)
         if self.train:
             self.trajectory.rewards.append(reward)
-            
+
         return reward
-        
 
     def calc_action(self, colloids: typing.List[Colloid]) -> typing.List[Action]:
         """

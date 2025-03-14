@@ -4,10 +4,11 @@ import flax.linen as nn
 import optax
 from flax.training import train_state
 import numpy as np
-import read_position_data
+import pre
 import cv2
 from matplotlib import pyplot as plt
 import pickle
+from functools import partial
 
 import logging
 
@@ -17,22 +18,25 @@ logging.basicConfig(
     level=logging.INFO,
 )
 # Load data
-(
-    ground_truth_positions,
-    input_data,
-    validation_ground_truth_positions,
-    validation_input_data,
-) = read_position_data.get_data()
-input_data = (input_data > 1.0).astype(float)
-validation_input_data = (validation_input_data > 1.0).astype(float)
+scale=2
+input_data = np.load("detected_images.npy")[:,::scale,::scale,:]
+ground_truth_positions = np.load("detected_centers.npy")
+
+# Split data into training and validation sets
+validation_input_data = input_data[-10:]
+validation_ground_truth_positions = ground_truth_positions[-10:]
+input_data = input_data[:-10]
+ground_truth_positions = ground_truth_positions[:-10]
+# input_data = (input_data > 1.9).astype(float)
+# validation_input_data = (validation_input_data > 1.9).astype(float)
 
 
 # Function to convert positions to binary images with larger circles
-def positions_to_binary_image(positions, img_size=(216, 216), radius=1):
+def positions_to_binary_image(positions, img_size=(int(506/scale), int(506/scale)), radius=1):
     images = np.zeros((len(positions), *img_size, 1), dtype=np.float32)
     for i, pos_list in enumerate(positions):
         for x, y in pos_list:  # Assuming each entry is a list of (x, y) tuples
-            cv2.circle(images[i, :, :, 0], (int(x / 8), int(y / 8)), radius, 1.0, -1)
+            cv2.circle(images[i, :, :, 0], (int(x / scale), int(y / scale)), radius, 1.0, -1)
     return images
 
 
@@ -45,7 +49,6 @@ validation_ground_truth_images = positions_to_binary_image(
 
 # Convolutional Autoencoder Definition
 class Autoencoder(nn.Module):
-    @nn.remat
     @nn.compact
     def __call__(self, x):
         # Encoder
@@ -69,12 +72,12 @@ class Autoencoder(nn.Module):
 
 # Weighted Binary Cross Entropy Loss
 
-
+@partial(jax.jit, static_argnums=(1,))
 def weighted_bce_loss(params, apply_fn, batch, target, weight):
     logits = apply_fn(params, batch)
     loss = -(
-        weight * target * jnp.log(logits + 1e-8)
-        + (1 - target) * jnp.log(1 - logits + 1e-8)
+        weight * target * jnp.log(logits + 1e-6)
+        + (1 - target) * jnp.log(1 - logits + 1e-6)
     )
     return jnp.mean(loss)
 
@@ -91,11 +94,12 @@ def train_step(state, batch, target, weight):
 
 # Create train state
 def create_train_state(rng, model):
-    dummy_input = jnp.ones((1, 216, 216, 1))
+    dummy_input = jnp.ones((1, int(506/scale), int(506/scale), 1))
     params = model.init(rng, dummy_input)
     model_summary = model.tabulate(rng, dummy_input)
     print(model_summary)
-    optimizer = optax.adam(1e-4)
+    lr_schedule = optax .schedules.exponential_decay(1e-4, 300, 0.99)
+    optimizer = optax.inject_hyperparams(optax.adam)(learning_rate=lr_schedule)
     return train_state.TrainState.create(
         apply_fn=model.apply, params=params, tx=optimizer
     )
@@ -108,10 +112,21 @@ rng = jax.random.PRNGKey(0)
 model = Autoencoder()
 state = create_train_state(rng, model)
 
-weight = 40  # Adjust this weight based on imbalance
+weight = np.ones_like(ground_truth_images[0])
+weight[50:150, 50:150] = 30 # Adjust this weight based on imbalance
+
 def save_model(state, path):
     with open(path, "wb") as f:
         pickle.dump(state.params, f)
+
+def load_model(path):
+    with open(path, "rb") as f:
+        logger.info(f"Loading model from {path}")
+        return pickle.load(f)
+
+# loaded_params = load_model("autoencoder_model/model_200.pkl")
+# state = state.replace(params=loaded_params)
+
 
 for epoch in range(10000):
     for batch, target in zip(
@@ -119,6 +134,8 @@ for epoch in range(10000):
     ):
         state, loss = train_step(state, batch, target, weight)
     logger.info(f"Epoch {epoch+1}, Loss: {loss:.6f}")
+    if np.isnan(loss):
+        raise ValueError("Loss is NaN. Reduce learning rate.")
     if epoch % 100 == 0:
         validation_loss = weighted_bce_loss(
             state.params,
@@ -133,6 +150,7 @@ for epoch in range(10000):
         ax[0].imshow(example_image[:, :, 0], cmap="gray")
         ax[1].imshow(validation_ground_truth_images[0, :, :, 0], cmap="gray")
         ax[2].imshow(example_output[0, :, :, 0], cmap="gray")
-        plt.savefig(f"output_{epoch}.png")
+        plt.savefig(f"autoencoder_model/output_{epoch}.png")
         plt.close()
-        save_model(state, f"model_{epoch}.pkl")
+        save_model(state, f"autoencoder_model/model_{epoch}.pkl")
+

@@ -98,17 +98,11 @@ class ExperimentTask(Task):
         dx = x[idx[0]] - x[idx[1]]
         dy = y[idx[0]] - y[idx[1]]
         angles = np.arctan2(dy, dx)
-        angle = np.array(angles)
+        angle = np.array(angles) % np.pi
         std_angle = sc.stats.circstd(angle)
         return std_angle
 
-    def __call__(self, image: np.ndarray) -> float:
-        
-        if image is None:
-            logger.warning("No image provided.")
-            return 0
-        image = np.array(image, dtype=np.uint8)
-        positions = self.detect_blobs(image)
+    def __call__(self, positions: np.ndarray) -> float:
         x = positions[:, 0]
         y = positions[:, 1]
         *_, regression_error = self.orthogonal_regression_svd(x, y)
