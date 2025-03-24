@@ -169,7 +169,7 @@ class GlobalContinuousTrainer(Trainer):
                     if episode % 10 == 0:
                         # Save the agents every 10 episodes.
                         for agent in self.agents.values():
-                            agent.save_trajectory()
+                            agent.save_trajectory(name = f"trajectory_{int(episode/10.0)}")
                             agent.save_agent()
 
             finally:

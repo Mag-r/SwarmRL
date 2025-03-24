@@ -18,7 +18,6 @@ from swarmrl.engine.gaurav_experiment import GauravExperiment
 
 cuda.select_device(0)
 
-# %%
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s\n",
@@ -26,36 +25,16 @@ logging.basicConfig(
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
-class Autoencoder(nn.Module):
-    @nn.remat
-    @nn.compact
-    def __call__(self, x):
-        # Encoder
-        x = nn.Conv(16, (3, 3), strides=(1, 1), padding="SAME")(x)
-        x = nn.relu(x)
-
-        x = nn.Conv(32, (3, 3), strides=(1, 1), padding="SAME")(x)
-        x = nn.relu(x)
-
-        x = nn.ConvTranspose(32, (3, 3), strides=(1, 1), padding="SAME")(x)
-        x = nn.relu(x)
-
-        x = nn.ConvTranspose(16, (3, 3), strides=(1, 1), padding="SAME")(x)
-        x = nn.relu(x)
-
-        x = nn.Conv(1, (3, 3), strides=(1, 1), padding="SAME")(x)
-
-        return nn.sigmoid(x)
 
 
 sequence_length = 3
 resolution = 253
 action_dimension = 4
 number_particles = 7
-learning_rate = 1e-4
+learning_rate = 1e-6
 
-obs = BaslerCameraObservable([resolution, resolution], Autoencoder(), model_path="Models/model_trained.pkl")
-task = ExperimentTask(number_particles=number_particles)
+obs = None
+task = None
 
 ureg = pint.UnitRegistry()
 Q_ = ureg.Quantity
@@ -88,7 +67,7 @@ experiment = GauravExperiment(sim)
 # %%
 protocol = setupNetwork.defineRLAgent(obs, task, learning_rate=learning_rate, sequence_length=sequence_length)
 
-# protocol.restore_agent()
+protocol.restore_agent()
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(experiment, 100, 30)

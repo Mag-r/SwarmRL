@@ -6,7 +6,7 @@ from jax import numpy as jnp
 
 import os
 
-action_dimension = 3
+action_dimension = 4
 
 
 class ActorNet(nn.Module):
@@ -108,7 +108,7 @@ def defineRLAgent(
     
     lr_schedule = optax.exponential_decay(
         init_value=learning_rate,
-        transition_steps=3000,
+        transition_steps=1000,
         decay_rate=0.95,
         staircase=True,
     )
@@ -122,10 +122,10 @@ def defineRLAgent(
     
 
     # Define a sampling_strategy
-    action_limits = jnp.array([[-100,100],[-100,100],[0.01, 4]])
+    action_limits = jnp.array([[0,100],[0,100],[0,50], [0,50]])
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
 
-    value_function = srl.value_functions.TDReturnsSAC(gamma=0.99, standardize=True)
+    value_function = srl.value_functions.TDReturnsSAC(gamma=0.95, standardize=True)
     n_particles = 7
     actor_network = srl.networks.ContinuousActionModel(
         flax_model=actor,
@@ -166,6 +166,6 @@ def defineRLAgent(
         task=task,
         observable=obs,
         loss=loss,
-        max_samples_in_trajectory=200,
+        max_samples_in_trajectory=500,
     )
     return protocol

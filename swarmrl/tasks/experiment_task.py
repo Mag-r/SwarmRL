@@ -34,7 +34,7 @@ class ExperimentTask(Task):
         self.old_residual = None
         self.old_angle_error = None
         self.angle_normalization = 1.6
-        self.regression_normalization = 253
+        self.regression_normalization = 1
 
     def detect_blobs(self, image: np.ndarray) -> np.ndarray:
         image = image[0,:,:,0]
@@ -114,6 +114,7 @@ class ExperimentTask(Task):
             return 0
         reward_regression = regression_error# - self.old_residual
         reward_angle = angle_error #- self.old_angle_error
+        logger.info(f"Reward regression: {reward_regression}, reward angle: {reward_angle}")
         self.old_residual = regression_error
         self.old_angle_error = angle_error
         return -(reward_regression + reward_angle)

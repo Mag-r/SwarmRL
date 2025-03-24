@@ -128,13 +128,14 @@ class GauravExperiment(Engine):
         # Convert action to string message and send
         
         action_message = (
-            f"M_0.0_{action.magnetic_field[0]}_{action.magnetic_field[1]}_{action.keep_magnetic_field}"
+            f"M_0.0_{action.magnitude[0]}_{action.magnitude[1]}_{action.frequency[0]}_{action.frequency[1]}_{action.keep_magnetic_field}"
         )
         self.update_message(action_message)
 
-    def clip_actions(self, action: MPIAction, max_amplitude: float = 100):
+    def clip_actions(self, action: MPIAction, max_amplitude: float = 100, max_frequency: float = 100):
         """Clip the action values."""
-        action.magnetic_field = np.clip(action.magnetic_field, -max_amplitude, max_amplitude)
+        action.magnitude = np.clip(action.magnitude, -max_amplitude, max_amplitude)
+        action.frequency = np.clip(action.frequency, 0, max_frequency)
         return action
 
     def integrate(self, n_slices: int, force_model: GlobalForceFunction):
@@ -142,7 +143,7 @@ class GauravExperiment(Engine):
 
         for _ in range(n_slices):
             action = force_model.calc_action(None)
-            action = MPIAction(magnetic_field=action[:2], keep_magnetic_field=action[2])
+            action = MPIAction(magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=0.5)
             action = self.clip_actions(action)
             self.send_action(action)
             logger.info(f"Action sent: {action}")

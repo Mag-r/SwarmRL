@@ -14,5 +14,7 @@ class MPIAction:
     """
 
     id = 0
-    magnetic_field: np.ndarray = np.array([0.0, 0.0])
+    magnitude: np.ndarray = np.array([0.0, 0.0])
+    frequency: np.ndarray = np.array([0.0, 0.0])
+    # magnetic_field: np.ndarray = np.array([0.0, 0.0])
     keep_magnetic_field: float = 1.0
