@@ -72,7 +72,7 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             log_probs = None
         else:
             epsilon = 1e-7
-            diag_cov = jnp.exp(logits[:, self.action_dimension :])/10 + epsilon
+            diag_cov = jnp.exp(logits[:, self.action_dimension :]) * (self.action_limits[:,1] - self.action_limits[:,0]) + epsilon
             cov_matrices = jnp.vectorize(lambda d: jnp.diag(d), signature="(n)->(n,n)")(
                 diag_cov
             )
@@ -93,7 +93,7 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
         action = (
             self.squash_action(action) if self.action_limits is not None else action
         )
-        logger.info(f"mean covariance {jnp.mean(cov_matrices)}")
+        logger.debug(f"mean covariance {jnp.mean(cov_matrices)}")
         logger.debug(f"{action=}, {log_probs=}, with shape {action.shape}")
         logger.debug(f"{cov_matrices=}")
         return action, log_probs

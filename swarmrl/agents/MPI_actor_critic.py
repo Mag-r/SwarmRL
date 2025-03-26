@@ -20,6 +20,7 @@ from swarmrl.tasks.task import Task
 from swarmrl.utils.colloid_utils import GlobalTrajectoryInformation
 import os
 import pickle
+from threading import Lock
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class MPIActorCriticAgent(Agent):
         train: bool = True,
         intrinsic_reward: IntrinsicReward = None,
         max_samples_in_trajectory: int = 200,
+        lock: Lock = Lock(),
     ):
         """
         Constructor for the actor-critic protocol.
@@ -68,6 +70,7 @@ class MPIActorCriticAgent(Agent):
         self.train = train
         self.loss = loss
         self.intrinsic_reward = intrinsic_reward
+        self.lock = lock
 
         # Trajectory to be updated.
         self.trajectory = GlobalTrajectoryInformation()
@@ -116,12 +119,11 @@ class MPIActorCriticAgent(Agent):
             self.intrinsic_reward.update(self.trajectory)
 
         # Reset the trajectory storage.
-        self.remove_old_data(
-            self.trajectory.features.shape[1] - self.max_samples_in_trajectory
-        )
-        logger.debug(
-            f"Shape of all saved properties in trajectory {np.array(self.trajectory.features).shape=}, {np.array(self.trajectory.actions).shape=}, {np.array(self.trajectory.rewards).shape=}, {np.array(self.trajectory.carry).shape=}, {np.array(self.trajectory.next_features).shape=}, {np.array(self.trajectory.next_carry).shape=}, {np.array(self.trajectory.action_sequence).shape=}"
-        )
+        with self.lock:
+            self.remove_old_data(
+                self.trajectory.features.shape[1] - self.max_samples_in_trajectory
+            )
+
         # self.trajectory = GlobalTrajectoryInformation()
 
         return rewards, killed
@@ -189,6 +191,7 @@ class MPIActorCriticAgent(Agent):
             probabilities = probabilities.at[-10:].set(0)
 
             key = jax.random.PRNGKey(0)
+            remove = np.min([remove, indices.shape[0]-10])
             selected_indices = jax.random.choice(
                 key, indices, shape=(remove,), replace=False, p=probabilities
             )
@@ -244,8 +247,8 @@ class MPIActorCriticAgent(Agent):
         self.actor_network.export_model(
             filename=f"{self.__name__()}_{self.particle_type}", directory=directory
         )
-        self.target_network.export_model(
-            filename=f"{self.__name__()}_{self.particle_type}_target",
+        self.critic_network.export_model(
+            filename=f"{self.__name__()}_{self.particle_type}_critic",
             directory=directory,
         )
 
@@ -279,7 +282,8 @@ class MPIActorCriticAgent(Agent):
                 episode_data=self.trajectory
             )
         if self.train:
-            self.trajectory.rewards.append(rewards)
+            with self.lock:
+                self.trajectory.rewards.append(rewards)
 
     def calc_action(self, colloids: typing.List[Colloid]) -> typing.List[Action]:
         """
@@ -305,25 +309,27 @@ class MPIActorCriticAgent(Agent):
         )[np.newaxis, np.shape(state_description)[0] - 1]
         next_carry = self.actor_network.carry
         # Update the trajectory information.
+
         if self.train:
-            self.trajectory.feature_sequence.append(state_description)
-            self.trajectory.carry.append(previous_carry)
+            with self.lock:
+                self.trajectory.feature_sequence.append(state_description)
+                self.trajectory.carry.append(previous_carry)
 
-            previous_actions = np.append(
-                previous_actions, np.expand_dims(action, axis=(0)), axis=1
-            )
-            previous_actions = np.squeeze(previous_actions)
-            self.trajectory.action_sequence.append(previous_actions)
-            self.trajectory.actions = (
-                np.append(self.trajectory.actions, action, axis=0)
-                if self.trajectory.actions.size > 0
-                else action
-            )
+                previous_actions = np.append(
+                    previous_actions, np.expand_dims(action, axis=(0)), axis=1
+                )
+                previous_actions = np.squeeze(previous_actions)
+                self.trajectory.action_sequence.append(previous_actions)
+                self.trajectory.actions = (
+                    np.append(self.trajectory.actions, action, axis=0)
+                    if self.trajectory.actions.size > 0
+                    else action
+                )
 
-            self.trajectory.killed = self.task.kill_switch
-            if len(self.trajectory.feature_sequence) > 1:
-                self.trajectory.next_features.append(state_description)
-                self.trajectory.next_carry.append(next_carry)
+                self.trajectory.killed = self.task.kill_switch
+                if len(self.trajectory.feature_sequence) > 1:
+                    self.trajectory.next_features.append(state_description)
+                    self.trajectory.next_carry.append(next_carry)
         self.kill_switch = self.task.kill_switch
         return np.squeeze(action)
 
@@ -358,9 +364,10 @@ class MPIActorCriticAgent(Agent):
         if self.trajectory.features.size == 0 and self.train:
             self.trajectory.features = latest_observable
         else:
-            self.trajectory.features = np.append(
-                self.trajectory.features, latest_observable, axis=1
-            )
+            with self.lock:
+                self.trajectory.features = np.append(
+                    self.trajectory.features, latest_observable, axis=1
+                )
 
         if self.trajectory.features.shape[1] >= self.actor_network.sequence_length:
             state_description = self.trajectory.features[

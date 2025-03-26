@@ -88,6 +88,7 @@ class ContinuousActionModel(Network, ABC):
         self.optimizer = optimizer
         self.model_state = self._create_train_state(subkey)
         self.deployment_mode = deployment_mode
+        self.iteration = 0
         if not deployment_mode:
             self.exploration_policy = exploration_policy
             self.epoch_count = 0
@@ -206,7 +207,8 @@ class ContinuousActionModel(Network, ABC):
                 output neurons. The second element is an array of the corresponding
                 log_probs (i.e. the output of the network put through a softmax).
         """
-        subkey = jax.random.fold_in(self.rng_key_sampling_strategy, self.epoch_count)
+        self.iteration += 1
+        subkey = jax.random.fold_in(self.rng_key_sampling_strategy, self.iteration)
         try:
             logits, _ = self.apply_fn(
                 {"params": params},
@@ -225,7 +227,8 @@ class ContinuousActionModel(Network, ABC):
         return action, log_probs
 
     def compute_action(self, observables, previous_actions):
-        subkey = jax.random.fold_in(self.rng_key_sampling_strategy, self.epoch_count)
+        self.iteration += 1
+        subkey = jax.random.fold_in(self.rng_key_sampling_strategy, self.iteration)
 
         try:
             logits, self.carry = self.apply_fn(

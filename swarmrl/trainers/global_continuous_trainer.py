@@ -7,16 +7,7 @@ from rich.progress import BarColumn, Progress, TimeRemainingColumn
 from typing import List, Tuple
 import logging
 import queue
-import cloudpickle
-import pickle
-import jax
-import os
-
-pickle.Pickler = cloudpickle.Pickler
-import multiprocessing as mp
-
-mp.reduction.ForkingPickler = cloudpickle.Pickler
-
+import threading
 
 from swarmrl.engine.engine import Engine
 from swarmrl.trainers.trainer import Trainer
@@ -24,17 +15,6 @@ from swarmrl.force_functions.global_force_fn import GlobalForceFunction
 from swarmrl.agents.MPI_actor_critic import MPIActorCriticAgent
 
 logger = logging.getLogger(__name__)
-
-
-def worker_run(engine: Engine, force_fn, _q: mp.Queue):
-    logger.info("Worker started.")
-    while True:
-        try:
-            _q.get(block=True, timeout=0)
-            logger.info("Worker ended.")
-            return
-        except queue.Empty:
-            engine.integrate(1, force_fn)
 
 
 class GlobalContinuousTrainer(Trainer):
@@ -47,10 +27,26 @@ class GlobalContinuousTrainer(Trainer):
             A list of RL protocols to use in the simulation.
     """
 
+    def __init__(
+        self,
+        agents: List[MPIActorCriticAgent],
+        lock: threading.Lock = threading.Lock(),
+    ):
+        super().__init__(agents)
+        self.learning_thread = threading.Thread(target=self.async_update_rl)
+        self.interaction_model_queue = queue.LifoQueue()
+        self.lock = lock
+
     def initialize_training(self) -> GlobalForceFunction:
         return GlobalForceFunction(
             agents=self.agents,
         )
+
+    def async_update_rl(self):
+        killed = False
+        while not killed:
+            force_fn, current_reward, killed = self.update_rl()
+            self.interaction_model_queue.put((force_fn, current_reward, killed))
 
     def update_rl(self) -> Tuple[GlobalForceFunction, np.ndarray]:
         """
@@ -83,7 +79,6 @@ class GlobalContinuousTrainer(Trainer):
         # Create a new interaction model.
         interaction_model = GlobalForceFunction(agents=self.agents)
         logger.debug("RL updated.")
-
         return interaction_model, np.array(reward), any(switches)
 
     def perform_rl_training(
@@ -110,7 +105,6 @@ class GlobalContinuousTrainer(Trainer):
         self.engine = system_runner
         rewards = [0.0]
         current_reward = 0.0
-        episode = 0
         # mp.set_start_method('spawn', force=True)
 
         force_fn = self.initialize_training()
@@ -131,48 +125,54 @@ class GlobalContinuousTrainer(Trainer):
             task = progress.add_task(
                 "RL Training",
                 total=n_episodes,
-                Episode=episode,
+                Episode=0,
                 current_reward=current_reward,
                 running_reward=np.mean(rewards),
                 visible=load_bar,
             )
             try:
-                for _ in range(n_episodes):
-
+                for episode in range(n_episodes):
                     self.engine.integrate(episode_length, force_fn)
-                    # mp.set_start_method('spawn', force=True)
-                    # q = mp.Queue(maxsize=1)
-                    # p = mp.Process(target=worker_run, args=(self.engine, force_fn, q))
-                    # p.start()
-                    # logger.info(jax.devices())
-                    force_fn, current_reward, killed = self.update_rl()
-                    # q.put(True)
-                    # p.join()
+                    if episode == 0:
+                        self.learning_thread.start()
+                    if not self.interaction_model_queue.empty():
+                        force_fn, current_reward, killed = (
+                            self.interaction_model_queue.get()
+                        )
+                        logger.info(
+                            f"obtained new interaction model. remaining in queue: {self.interaction_model_queue.qsize()}"
+                        )
 
-                    if killed:
-                        print("Simulation has been ended by the task, ending training.")
-                        self.engine.finalize()
-                        break
+                        if killed:
+                            print(
+                                "Simulation has been ended by the task, ending training."
+                            )
+                            self.engine.finalize()
+                            break
 
-                    rewards.append(current_reward)
-                    episode += 1
-                    logger.info(
-                        f"Episode {episode}; mean immediate reward: {current_reward}"
-                    )
-                    progress.update(
-                        task,
-                        advance=1,
-                        Episode=episode,
-                        current_reward=np.round(current_reward, 2),
-                        running_reward=np.round(np.mean(rewards[-10:]), 2),
-                    )
-                    if episode % 10 == 0:
-                        # Save the agents every 10 episodes.
-                        for agent in self.agents.values():
-                            agent.save_trajectory()
-                            agent.save_agent()
+                        rewards.append(current_reward)
+                        logger.info(
+                            f"Episode {episode}; mean immediate reward: {current_reward}"
+                        )
+                        progress.update(
+                            task,
+                            advance=1,
+                            Episode=episode,
+                            current_reward=np.round(current_reward, 2),
+                            running_reward=np.round(np.mean(rewards[-10:]), 2),
+                        )
+                        if episode % 10 == 0:
+                            # Save the agents every 10 episodes.
+                            for agent in self.agents.values():
+                                agent.save_trajectory()
+                                agent.save_agent()
+                    else:
+                        logger.info(
+                            "Sampling is faster than learning."
+                        )
 
             finally:
                 self.engine.finalize()
+                self.learning_thread.join(0.0)
 
         return np.array(rewards)

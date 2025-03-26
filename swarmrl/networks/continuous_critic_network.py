@@ -146,7 +146,7 @@ class ContinuousCriticModel(Network, ABC):
             ),
             np.ones(list([self.input_shape[0], self.action_dimension])),
         )["params"]
-        
+
         if isinstance(self.optimizer, dict):
             CustomTrainState = self._create_custom_train_state(self.optimizer)
 
@@ -255,16 +255,29 @@ class ContinuousCriticModel(Network, ABC):
                 in the currently directory, it will be created.
 
         """
-        model_params = self.model_state.params
-        opt_state = self.model_state.opt_state
-        opt_step = self.model_state.step
+        model_params_critic = self.critic_state.params
+        model_params_target = self.target_state.params
+        opt_state_critic = self.critic_state.opt_state
+        opt_state_target = self.target_state.opt_state
+        opt_step_critic = self.critic_state.step
+        opt_step_target = self.target_state.step
         epoch = self.epoch_count
-
 
         os.makedirs(directory, exist_ok=True)
 
         with open(directory + "/" + filename + ".pkl", "wb") as f:
-            pickle.dump((model_params, opt_state, opt_step, epoch), f)
+            pickle.dump(
+                (
+                    model_params_critic,
+                    model_params_target,
+                    opt_state_critic,
+                    opt_state_target,
+                    opt_step_critic,
+                    opt_step_target,
+                    epoch,
+                ),
+                f,
+            )
 
     def restore_model_state(self, filename: str = "model", directory: str = "Models"):
         """
@@ -283,11 +296,25 @@ class ContinuousCriticModel(Network, ABC):
         """
 
         with open(directory + "/" + filename + ".pkl", "rb") as f:
-            model_params, opt_state, opt_step, epoch= pickle.load(f)
+            (
+                model_params_critics,
+                model_params_target,
+                opt_state_critic,
+                opt_state_target,
+                opt_step_critic,
+                opt_step_target,
+                epoch,
+            ) = pickle.load(f)
 
-        self.model_state = self.model_state.replace(
-            params=model_params, opt_state=opt_state, step=opt_step
+        self.critic_state = self.critic_state.replace(
+            params=model_params_critics,
+            opt_state=opt_state_critic,
+            step=opt_step_critic,
         )
+        self.target_state = self.target_state.replace(
+            params=model_params_target, opt_state=opt_state_target, step=opt_step_target
+        )
+
         self.epoch_count = epoch
 
         logger.info(f"Model state restored from {directory}/{filename}.pkl")

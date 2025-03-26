@@ -4,10 +4,12 @@ import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 from functools import partial
+from threading import Lock
 
 from swarmrl.losses.loss import Loss
 from swarmrl.networks.network import Network
 from swarmrl.value_functions.td_return_sac import TDReturnsSAC
+
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,7 @@ class SoftActorCriticGradientLoss(Loss):
         value_function: TDReturnsSAC = TDReturnsSAC(),
         minimum_entropy: float = 0.0,
         polyak_averaging_tau: float = 0.005,
+        lock: Lock = Lock(),
     ):
         """
         Constructor for the reward class.
@@ -42,6 +45,7 @@ class SoftActorCriticGradientLoss(Loss):
         self.polyak_averaging_tau = polyak_averaging_tau
         self.running_mean = 0.0
         self.running_std = 1.0
+        self.lock = lock
 
     def _calculate_loss(
         self,
@@ -294,29 +298,30 @@ class SoftActorCriticGradientLoss(Loss):
         -------
 
         """
-        feature_data = jnp.array(episode_data.feature_sequence)
-        next_feature_data = jnp.array(episode_data.next_features)
-        iterations, n_particles, *feature_dimension = feature_data.shape
-        iterations_next, *_ = next_feature_data.shape
-        feature_data = feature_data.reshape(
-            (iterations * n_particles, *feature_dimension)
-        )[:iterations_next]
-        next_feature_data = next_feature_data.reshape(
-            ((iterations_next) * n_particles, *feature_dimension)
-        )
-        next_carry_data = jnp.array(episode_data.next_carry)
-        next_carry_data = jnp.squeeze(next_carry_data)[:iterations_next]
-        next_carry_data = tuple(jnp.swapaxes(next_carry_data, 0, 1))
-        carry = jnp.array(episode_data.carry)
-        carry = jnp.squeeze(carry)[:iterations_next]
-        carry = tuple(jnp.swapaxes(carry, 0, 1))
-        actions = jnp.array(episode_data.actions)[:iterations_next]
-        action_sequence = jnp.array(episode_data.action_sequence)[:iterations_next]
-        reward_data = jnp.array(episode_data.rewards)[:iterations_next, jnp.newaxis]
-        # reward_data = self.normalize_rewards(reward_data)
-        self.n_time_steps = jnp.shape(feature_data)[0]
-        if jnp.isnan(reward_data).any():
-            raise ValueError("Nan in reward data")
+        with self.lock:
+            feature_data = jnp.array(episode_data.feature_sequence).copy()
+            next_feature_data = jnp.array(episode_data.next_features).copy()
+            iterations, n_particles, *feature_dimension = feature_data.shape
+            iterations_next, *_ = next_feature_data.shape
+            feature_data = feature_data.reshape(
+                (iterations * n_particles, *feature_dimension)
+            )[:iterations_next]
+            next_feature_data = next_feature_data.reshape(
+                ((iterations_next) * n_particles, *feature_dimension)
+            )
+            next_carry_data = jnp.array(episode_data.next_carry).copy()
+            next_carry_data = jnp.squeeze(next_carry_data)[:iterations_next]
+            next_carry_data = tuple(jnp.swapaxes(next_carry_data, 0, 1))
+            carry = jnp.array(episode_data.carry).copy()
+            carry = jnp.squeeze(carry)[:iterations_next]
+            carry = tuple(jnp.swapaxes(carry, 0, 1))
+            actions = jnp.array(episode_data.actions)[:iterations_next].copy()
+            action_sequence = jnp.array(episode_data.action_sequence)[:iterations_next].copy()
+            reward_data = jnp.array(episode_data.rewards)[:iterations_next, jnp.newaxis].copy()
+            # reward_data = self.normalize_rewards(reward_data)
+            self.n_time_steps = jnp.shape(feature_data)[0]
+            if jnp.isnan(reward_data).any():
+                raise ValueError("Nan in reward data")
         first_actor_loss, first_critic_loss, first_temperature_loss, _ = (
             self._calculate_loss(
                 critic_network_params=critic_network.critic_state.params,
@@ -332,20 +337,20 @@ class SoftActorCriticGradientLoss(Loss):
                 action_sequence=action_sequence,
             )
         )
-        for _ in range(10):
-            self._calculate_loss(
-                critic_network_params=critic_network.critic_state.params,
-                critic_network=critic_network,
-                actor_network_params=actor_network.model_state.params,
-                actor_network=actor_network,
-                feature_data=feature_data,
-                next_feature_data=next_feature_data,
-                carry=carry,
-                next_carry=next_carry_data,
-                rewards=reward_data,
-                actions=actions,
-                action_sequence=action_sequence,
-            )
+        # for _ in range(10):
+        #     self._calculate_loss(
+        #         critic_network_params=critic_network.critic_state.params,
+        #         critic_network=critic_network,
+        #         actor_network_params=actor_network.model_state.params,
+        #         actor_network=actor_network,
+        #         feature_data=feature_data,
+        #         next_feature_data=next_feature_data,
+        #         carry=carry,
+        #         next_carry=next_carry_data,
+        #         rewards=reward_data,
+        #         actions=actions,
+        #         action_sequence=action_sequence,
+        #     )
         (
             second_actor_loss,
             second_critic_loss,

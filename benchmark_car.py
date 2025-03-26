@@ -9,6 +9,7 @@ import optax
 from flax import linen as nn
 from jax import numpy as jnp
 from numba import cuda
+from threading import Lock
 
 import swarmrl as srl
 from swarmrl.engine.car_benchmark import CarBenchmark
@@ -137,7 +138,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-
+lock = Lock()
 resolution = 96
 learning_rate = 2.5e-4
 sequence_length = 2
@@ -206,6 +207,7 @@ loss = srl.losses.SoftActorCriticGradientLoss(
     value_function=value_function,
     minimum_entropy=-action_dimension,
     polyak_averaging_tau=0.005,
+    lock=lock,
 )
 
 protocol = srl.agents.MPIActorCriticAgent(
@@ -215,6 +217,8 @@ protocol = srl.agents.MPIActorCriticAgent(
     task=task,
     observable=obs,
     loss=loss,
+    lock=lock,
+    max_samples_in_trajectory=20,
 )
 # Initialize the simulation system
 total_reward = []
@@ -223,7 +227,7 @@ system_runner = CarBenchmark()
 
 # learning_rate = np.random.rand() * np.power(10.0, np.random.randint(-16, -3))
 # protocol.restore_agent()
-rl_trainer = Trainer([protocol])
+rl_trainer = Trainer([protocol], lock=lock)
 print(f"Start training, with learning rate {learning_rate}", flush=True)
 if __name__ == "__main__":
     reward = rl_trainer.perform_rl_training(system_runner, 1000, 100)
