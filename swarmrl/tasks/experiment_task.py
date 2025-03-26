@@ -33,8 +33,8 @@ class ExperimentTask(Task):
         self.number_particles = number_particles
         self.old_residual = None
         self.old_angle_error = None
-        self.angle_normalization = 1.6
-        self.regression_normalization = 1
+        self.angle_normalization = 1.62
+        self.regression_normalization = 1.5
 
     def detect_blobs(self, image: np.ndarray) -> np.ndarray:
         image = image[0,:,:,0]

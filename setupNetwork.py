@@ -125,7 +125,7 @@ def defineRLAgent(
     action_limits = jnp.array([[0,100],[0,100],[0,50], [0,50]])
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
 
-    value_function = srl.value_functions.TDReturnsSAC(gamma=0.95, standardize=True)
+    value_function = srl.value_functions.TDReturnsSAC(gamma=0.8, standardize=True)
     n_particles = 7
     actor_network = srl.networks.ContinuousActionModel(
         flax_model=actor,
@@ -156,7 +156,7 @@ def defineRLAgent(
     loss = srl.losses.SoftActorCriticGradientLoss(
         value_function=value_function,
         minimum_entropy=-action_dimension,
-        polyak_averaging_tau=0.005,
+        polyak_averaging_tau=0.05,
     )
 
     protocol = srl.agents.MPIActorCriticAgent(
@@ -166,6 +166,6 @@ def defineRLAgent(
         task=task,
         observable=obs,
         loss=loss,
-        max_samples_in_trajectory=500,
+        max_samples_in_trajectory=1000,
     )
     return protocol
