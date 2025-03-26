@@ -66,7 +66,7 @@ class TDReturnsSAC:
         # logger.info(f"{log_probs=}, with shape {np.shape(log_probs)}")
         # logger.info(f"{q_value=}, with shape {np.shape(q_value)}")
         
-        assert np.shape(expected_future_rewards) == np.shape(expected_returns)
+        assert np.shape(expected_future_rewards) == np.shape(expected_returns), f"Expected future rewards must have the same shape as rewards. Has shape {np.shape(expected_future_rewards)} and {np.shape(expected_returns)}"
         expected_returns = rewards + self.gamma * expected_future_rewards
         if self.standardize:
             mean_vector = np.mean(expected_returns)
