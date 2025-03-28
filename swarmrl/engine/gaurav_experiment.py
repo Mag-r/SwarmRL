@@ -50,7 +50,7 @@ class GauravExperiment(Engine):
             self.labview_listener.sendall(self.closing_message)
             # Start server for publishing
             self.labview_publisher.settimeout(10)
-            self.labview_publisher.bind(('', time_port))
+            self.labview_publisher.bind(("", time_port))
             self.labview_publisher.listen(1)
 
             self.server_connection, _ = self.labview_publisher.accept()
@@ -89,8 +89,8 @@ class GauravExperiment(Engine):
             except Exception as e:
                 logger.error(f"Error sending message: {e}")
                 if message != self.closing_message:
-                    self.stop_publishing() 
-                
+                    self.stop_publishing()
+
     def update_message(self, new_message: str):
         """Update the message to be published."""
         self.message_to_publish = new_message
@@ -107,13 +107,13 @@ class GauravExperiment(Engine):
     def finalize(self):
         self.stop_publishing()
         return super().finalize()
-    
+
     def stop_publishing(self):
         """Stop the publishing thread and close connections."""
         self.keep_publishing.clear()
         if self.publishing_thread:
             self.publishing_thread.join()
-            
+
         if self.labview_listener:
             self.labview_listener.close()
 
@@ -126,13 +126,13 @@ class GauravExperiment(Engine):
     def send_action(self, action: MPIAction):
         """Send an action to LabVIEW."""
         # Convert action to string message and send
-        
-        action_message = (
-            f"M_0.0_{action.magnitude[0]}_{action.magnitude[1]}_{action.frequency[0]}_{action.frequency[1]}_{action.keep_magnetic_field}"
-        )
+
+        action_message = f"M_0.0_{action.magnitude[0]}_{action.magnitude[1]}_{action.frequency[0]}_{action.frequency[1]}_{action.keep_magnetic_field}"
         self.update_message(action_message)
 
-    def clip_actions(self, action: MPIAction, max_amplitude: float = 100, max_frequency: float = 100):
+    def clip_actions(
+        self, action: MPIAction, max_amplitude: float = 100, max_frequency: float = 100
+    ):
         """Clip the action values."""
         action.magnitude = np.clip(action.magnitude, -max_amplitude, max_amplitude)
         action.frequency = np.clip(action.frequency, 0, max_frequency)
@@ -143,11 +143,11 @@ class GauravExperiment(Engine):
 
         for _ in range(n_slices):
             action = force_model.calc_action(None)
-            action = MPIAction(magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=2)
+            action = MPIAction(
+                magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=2
+            )
             action = self.clip_actions(action)
             self.send_action(action)
             logger.info(f"Action sent: {action}")
             time.sleep(float(action.keep_magnetic_field) * 0.95)
             force_model.calc_reward(self.colloids)
-
-

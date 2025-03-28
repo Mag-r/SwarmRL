@@ -55,7 +55,11 @@ class BaslerCameraObservable(Observable, ABC):
     }
 
     def __init__(
-        self, resolution: List[int], autoencoder: nn.Module, model_path: str = None, number_particles: int = 7
+        self,
+        resolution: List[int],
+        autoencoder: nn.Module,
+        model_path: str = None,
+        number_particles: int = 7,
     ):
         """
         Constructor for the observable.
@@ -167,64 +171,79 @@ class BaslerCameraObservable(Observable, ABC):
             padding = np.zeros((1, padding, 2))
             positions = np.concatenate((positions, padding), axis=1)
         elif positions.shape[1] > self.number_particles:
-            positions = positions[:, :self.number_particles, :]
+            positions = positions[:, : self.number_particles, :]
         return positions
 
-    def extract_positions(self, image: np.ndarray) -> np.ndarray:
+    def extract_positions(self, original_image: np.ndarray) -> np.ndarray:
         """
         Extracts the positions of the colloids from the image.
         """
-        image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
+        image = cv2.resize(original_image, (self.resolution[0], self.resolution[1]))
         image = np.array(image, dtype=np.float32)
         image = (image - np.mean(image)) / np.std(image)
         image = np.reshape(image, (1, self.resolution[0], self.resolution[1], 1))
         cleaned_image = self.model_state.apply_fn(self.model_state.params, image)
         processed_image, contours = self.threshold_and_extract_contours(cleaned_image)
+
+        original_image = np.array(original_image, dtype=np.uint8)
+        contour_image = cv2.cvtColor(original_image, cv2.COLOR_GRAY2BGR)
+        cv2.drawContours(contour_image, contours, -1, (0, 255, 0), 2)
+        self.image_queue.put(contour_image)
         # contour_image = cv2.cvtColor(cleaned_image, cv2.COLOR_GRAY2BGR)
         # cv2.drawContours(contour_image, contours, -1, 255, -1)
         # self.image_queue.put(contour_image)
         min_length = 0.01
-        contours = [contour for contour in contours if cv2.arcLength(contour, True) > min_length]
+        contours = [
+            contour for contour in contours if cv2.arcLength(contour, True) > min_length
+        ]
         attempts = 0
-        while len(contours)!=self.number_particles and attempts < 5:
-            self.threshold = self.threshold + (len(contours)-self.number_particles)*0.01
+        while len(contours) != self.number_particles and attempts < 5:
+            self.threshold = (
+                self.threshold + (len(contours) - self.number_particles) * 0.01
+            )
             self.threshold = np.clip(self.threshold, 0.5, 0.98)
-            logger.warning(f"Detected {len(contours)} of {self.number_particles}. Threshold changed to {self.threshold}, in attempt {attempts}.")
-            processed_image, contours = self.threshold_and_extract_contours(cleaned_image)
+            logger.warning(
+                f"Detected {len(contours)} of {self.number_particles}. Threshold changed to {self.threshold}, in attempt {attempts}."
+            )
+            processed_image, contours = self.threshold_and_extract_contours(
+                cleaned_image
+            )
             attempts = attempts + 1
         # image = np.squeeze(image)
         # image = np.array(image, dtype=np.uint8)
         # cv2.drawContours(image, contours, -1, (0, 255, 0), 2)
         # self.image_queue.put(image)
         positions = np.array([cv2.boundingRect(contour) for contour in contours])
-        try:
-            positions = positions[:, :2] + positions[:, 2:] / 2
-        except:
-            print(positions,flush=True)
-            print(positions.shape,flush=True)
-            raise Exception("Error in extracting positions")
-        positions = (positions-positions.mean())/positions.std()
-        
+        positions = positions[:, :2] + positions[:, 2:] / 2
+
+        positions = (positions - positions.mean()) / positions.std()
+
         if len(positions) != self.number_particles:
             logger.warning(
                 f"Number of particles detected {len(positions)} is not equal to the expected number of particles {self.number_particles}."
             )
-            
-        return positions.reshape(1,-1, 2)
+
+        return positions.reshape(1, -1, 2)
 
     def threshold_and_extract_contours(self, cleaned_image):
         processed_image = cleaned_image > self.threshold
         processed_image = np.squeeze(processed_image)
         processed_image = onp.array(processed_image * 255, dtype=onp.uint8)
 
-        contours, _ = cv2.findContours(processed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        return processed_image,contours
+        contours, _ = cv2.findContours(
+            processed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        return processed_image, contours
 
     def save_images_async(self):
         while True:
             if not self.image_queue.empty():
                 image = self.image_queue.get()
-                plt.imsave(f"images/camera_image_{self.image_count:04d}.png", image, cmap="gray") 
+                plt.imsave(
+                    f"images/camera_image_{self.image_count:04d}.png",
+                    image,
+                    cmap="gray",
+                )
                 plt.imsave(f"images/latest_camera_image.png", image, cmap="gray")
                 self.image_count = self.image_count + 1
             else:

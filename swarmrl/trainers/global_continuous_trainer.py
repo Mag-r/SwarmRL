@@ -139,8 +139,11 @@ class GlobalContinuousTrainer(Trainer):
                         force_fn, current_reward, killed = (
                             self.interaction_model_queue.get()
                         )
+                        with self.lock: #clear the queue, to not use old models
+                            while not self.interaction_model_queue.empty():
+                                self.interaction_model_queue.get()
                         logger.info(
-                            f"obtained new interaction model. remaining in queue: {self.interaction_model_queue.qsize()}"
+                            f"obtained new interaction model"
                         )
 
                         if killed:
