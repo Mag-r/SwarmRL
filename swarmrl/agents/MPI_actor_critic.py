@@ -150,7 +150,7 @@ class MPIActorCriticAgent(Agent):
         self.trajectory = GlobalTrajectoryInformation()
 
     def save_trajectory(
-        self, directory: str = "training_data", name: str = "trajectory"
+        self, directory: str = "training_data", identifier: str = "trajectory"
     ):
         """
         Save the trajectory of the agent.
@@ -174,7 +174,7 @@ class MPIActorCriticAgent(Agent):
             "killed": self.trajectory.killed,
         }
 
-        filename = os.path.join(directory, f"{name}.pkl")
+        filename = os.path.join(directory, f"trajectory_{identifier}.pkl")
         with open(filename, "wb") as f:
             pickle.dump(trajectory_data, f)
 
@@ -235,7 +235,7 @@ class MPIActorCriticAgent(Agent):
         self.actor_network.reinitialize_network()
         self.critic_network.reinitialize_network()
 
-    def save_agent(self, directory: str = "Models"):
+    def save_agent(self, directory: str = "Models", identifier: str = ""):
         """
         Save the agent network state.
 
@@ -245,27 +245,24 @@ class MPIActorCriticAgent(Agent):
                 Location to save the models.
         """
         self.actor_network.export_model(
-            filename=f"{self.__name__()}_{self.particle_type}_actor",
+            filename=f"{self.__name__()}_{self.particle_type}_actor_{identifier}",
             directory=directory,
         )
         self.critic_network.export_model(
-            filename=f"{self.__name__()}_{self.particle_type}_critic",
-        )
-        self.critic_network.export_model(
-            filename=f"{self.__name__()}_{self.particle_type}_critic",
+            filename=f"{self.__name__()}_{self.particle_type}_critic_{identifier}",
             directory=directory,
         )
 
-    def restore_agent(self, directory: str = "Models"):
+    def restore_agent(self, directory: str = "Models", identifier: str = ""):
         """
         Restore the agent state from a directory.
         """
         self.actor_network.restore_model_state(
-            filename=f"{self.__name__()}_{self.particle_type}_actor",
+            filename=f"{self.__name__()}_{self.particle_type}_actor_{identifier}",
             directory=directory,
         )
         self.critic_network.restore_model_state(
-            filename=f"{self.__name__()}_{self.particle_type}_critic",
+            filename=f"{self.__name__()}_{self.particle_type}_critic_{identifier}",
             directory=directory,
         )
 

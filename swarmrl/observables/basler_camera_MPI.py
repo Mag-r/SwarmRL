@@ -164,7 +164,7 @@ class BaslerCameraObservable(Observable, ABC):
             logger.warning(
                 f"Image queue is starting to fill. Current size {self.image_queue.qsize()}"
             )
-        self.image_queue.put(image)
+        # self.image_queue.put(image)
         positions = self.extract_positions(image)
         if positions.shape[1] < self.number_particles:
             padding = self.number_particles - positions.shape[1]
@@ -185,10 +185,10 @@ class BaslerCameraObservable(Observable, ABC):
         cleaned_image = self.model_state.apply_fn(self.model_state.params, image)
         processed_image, contours = self.threshold_and_extract_contours(cleaned_image)
 
-        original_image = np.array(original_image, dtype=np.uint8)
+        original_image = onp.array(original_image, dtype=np.uint8)
         contour_image = cv2.cvtColor(original_image, cv2.COLOR_GRAY2BGR)
-        cv2.drawContours(contour_image, contours, -1, (0, 255, 0), 2)
-        self.image_queue.put(contour_image)
+        cv2.drawContours(original_image, contours, -1, (255, 0, 0), 2)
+        self.image_queue.put(original_image)
         # contour_image = cv2.cvtColor(cleaned_image, cv2.COLOR_GRAY2BGR)
         # cv2.drawContours(contour_image, contours, -1, 255, -1)
         # self.image_queue.put(contour_image)
@@ -242,9 +242,8 @@ class BaslerCameraObservable(Observable, ABC):
                 plt.imsave(
                     f"images/camera_image_{self.image_count:04d}.png",
                     image,
-                    cmap="gray",
                 )
-                plt.imsave(f"images/latest_camera_image.png", image, cmap="gray")
+                plt.imsave(f"images/latest_camera_image.png", image)
                 self.image_count = self.image_count + 1
             else:
                 threading.Event().wait(0.1)

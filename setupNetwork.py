@@ -102,14 +102,14 @@ class CriticNet(nn.Module):
 
 
 def defineRLAgent(
-    obs, task: srl.tasks.Task, learning_rate: float, resolution=506, sequence_length=4
+    obs, task: srl.tasks.Task, learning_rate: float, resolution=506, sequence_length=4, lock=None
 ) -> srl.agents.MPIActorCriticAgent:
     # Define the model
     
     lr_schedule = optax.exponential_decay(
         init_value=learning_rate,
-        transition_steps=1000,
-        decay_rate=0.95,
+        transition_steps=100,
+        decay_rate=0.99,
         staircase=True,
     )
     optimizer = optax.inject_hyperparams(optax.adam)(learning_rate=lr_schedule)
@@ -157,6 +157,7 @@ def defineRLAgent(
         value_function=value_function,
         minimum_entropy=-action_dimension,
         polyak_averaging_tau=0.05,
+        lock=lock
     )
 
     protocol = srl.agents.MPIActorCriticAgent(
@@ -167,5 +168,6 @@ def defineRLAgent(
         observable=obs,
         loss=loss,
         max_samples_in_trajectory=1000,
+        lock=lock
     )
     return protocol

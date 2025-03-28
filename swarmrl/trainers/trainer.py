@@ -115,7 +115,7 @@ class Trainer:
         for agent in self.agents.values():
             agent.save_agent(directory)
 
-    def restore_models(self, directory: str = "Models"):
+    def restore_models(self, directory: str = "Models", identifier: str = ""):
         """
         Export the models to the specified directory.
 
@@ -129,7 +129,7 @@ class Trainer:
         Loads the actor and critic from the specific directory.
         """
         for agent in self.agents.values():
-            agent.restore_agent(directory)
+            agent.restore_agent(directory, identifier=identifier)
 
     def initialize_models(self):
         """

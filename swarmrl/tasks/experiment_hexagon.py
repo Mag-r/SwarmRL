@@ -9,8 +9,11 @@ logger = logging.getLogger(__name__)
 
 class ExperimentHexagonTask(Task):
 
-    def __init__(self):
+    def __init__(self, number_particles: int):
         super().__init__(particle_type=0)
+        if number_particles != 7:
+            raise ValueError("Number of particles must be 7 for this task.")
+        self.number_particles = number_particles
 
     def delaunay_triangulation(self, positions: np.ndarray) -> np.ndarray:
         triangulation = sc.spatial.Delaunay(positions)
@@ -34,6 +37,8 @@ class ExperimentHexagonTask(Task):
         return phi_6_list.sum() / (len(phi_6_list) - 1)
 
     def __call__(self, positions: np.ndarray) -> float:
+        # logger.info(f"Positions: {positions}, with shape {positions.shape}")
+        positions = positions.reshape((self.number_particles, 2))
         triangulation = self.delaunay_triangulation(positions)
         central_colloid = self.find_central_colloid(triangulation)
 

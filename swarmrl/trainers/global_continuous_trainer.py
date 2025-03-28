@@ -166,9 +166,12 @@ class GlobalContinuousTrainer(Trainer):
                         )
                         if episode % 10 == 0:
                             # Save the agents every 10 episodes.
-                            for agent in self.agents.values():
-                                agent.save_trajectory()
-                                agent.save_agent()
+                            logger.info("Trying to seperate the rafts and save the agents.")
+                            self.engine.seperate_rafts()
+                            with self.lock:
+                                for agent in self.agents.values():
+                                    agent.save_trajectory(identifier = f"{agent.task.__class__.__name__}_episode_{int(episode/10.0)}")
+                                    agent.save_agent(identifier = agent.task.__class__.__name__)
                     else:
                         logger.info(
                             "Sampling is faster than learning."

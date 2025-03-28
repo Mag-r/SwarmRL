@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6344
+    labview_port = 6342
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  # check with Gaurav
@@ -126,7 +126,7 @@ class GauravExperiment(Engine):
     def send_action(self, action: MPIAction):
         """Send an action to LabVIEW."""
         # Convert action to string message and send
-
+        action = self.clip_actions(action)
         action_message = f"M_0.0_{action.magnitude[0]}_{action.magnitude[1]}_{action.frequency[0]}_{action.frequency[1]}_{action.keep_magnetic_field}"
         self.update_message(action_message)
 
@@ -138,6 +138,13 @@ class GauravExperiment(Engine):
         action.frequency = np.clip(action.frequency, 0, max_frequency)
         return action
 
+    def seperate_rafts(self):
+        seperation_action = MPIAction(
+            magnitude=[100, 100], frequency=[25, 26], keep_magnetic_field=10
+        )
+        self.send_action(seperation_action)
+        time.sleep(10)
+
     def integrate(self, n_slices: int, force_model: GlobalForceFunction):
         """Perform a real-experiment equivalent of an integration step."""
 
@@ -146,7 +153,6 @@ class GauravExperiment(Engine):
             action = MPIAction(
                 magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=2
             )
-            action = self.clip_actions(action)
             self.send_action(action)
             logger.info(f"Action sent: {action}")
             time.sleep(float(action.keep_magnetic_field) * 0.95)

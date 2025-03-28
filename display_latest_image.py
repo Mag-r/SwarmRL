@@ -24,7 +24,7 @@ def load_and_display_image():
                     print("Error loading image, try again", flush=True)
                     continue
                 if img_display is None:
-                    img_display = ax.imshow(image, cmap="gray")
+                    img_display = ax.imshow(image)
                     plt.axis("off")
                 else:
                     img_display.set_data(image)
