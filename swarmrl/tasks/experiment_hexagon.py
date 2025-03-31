@@ -36,7 +36,7 @@ class ExperimentHexagonTask(Task):
         )
         return phi_6_list.sum() / (len(phi_6_list) - 1)
     
-    def distance_central(self, positions: np.ndarray, central_colloid, np.ndarray) -> float:
+    def distance_central(self, positions: np.ndarray, central_colloid: np.ndarray) -> float:
         distance = np.linalg.norm(
             positions[central_colloid, :] - positions[central_colloid, :]
         )
@@ -48,8 +48,8 @@ class ExperimentHexagonTask(Task):
         triangulation = self.delaunay_triangulation(positions)
         central_colloid = self.find_central_colloid(triangulation)
         distance = self.distance_central(positions, central_colloid)
-        distance_reward = - np.linalg.norm(distance - 10)
+        # distance_reward = - np.linalg.norm(distance - 10)
         phi6_reward = np.abs(self.phi_6(positions, central_colloid))
-        logger.info(f"distance reward: {distance_reward}, distance: {distance}, phi6: {phi6_reward}")
-        reward = phi6_reward - distance_reward
+        # logger.info(f"distance reward: {distance_reward}, distance: {distance}, phi6: {phi6_reward}")
+        reward = phi6_reward #- distance_reward
         return reward

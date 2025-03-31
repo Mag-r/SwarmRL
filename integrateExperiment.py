@@ -52,7 +52,7 @@ class Autoencoder(nn.Module):
 
 sequence_length = 3
 resolution = 253
-action_dimension = 4
+
 number_particles = 7
 learning_rate = 1e-3
 
@@ -97,7 +97,7 @@ protocol = setupNetwork.defineRLAgent(
     obs, task, learning_rate=learning_rate, sequence_length=sequence_length, lock=lock
 )
 
-protocol.restore_agent(identifier=task.__class__.__name__)
+# protocol.restore_agent(identifier=task.__class__.__name__)
 rl_trainer = Trainer([protocol], lock=lock)
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(experiment, 100, 10)

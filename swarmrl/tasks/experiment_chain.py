@@ -11,7 +11,7 @@ import scipy as sc
 logger = logging.getLogger(__name__)
 
 
-class ExperimentTask(Task):
+class ExperimentChainTask(Task):
 
     def __init__(self, number_particles: int):
         super().__init__(particle_type=0)
@@ -103,6 +103,7 @@ class ExperimentTask(Task):
         return std_angle
 
     def __call__(self, positions: np.ndarray) -> float:
+        positions =(positions-np.mean(positions))/np.std(positions)
         x = positions[0, :, 0]
         y = positions[0, :, 1]
         *_, regression_error = self.orthogonal_regression_svd(x, y)

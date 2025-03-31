@@ -8,7 +8,7 @@ import logging
 import os
 
 logger = logging.getLogger(__name__)
-action_dimension = 4
+action_dimension = 5
 
 
 class ActorNet(nn.Module):
@@ -16,7 +16,7 @@ class ActorNet(nn.Module):
     (batch,time,features)
     When dense at beginning, probably flatten is required
     """
-
+ 
     def setup(self):
         # Define a scanned LSTM cell
         self.ScanLSTM = nn.scan(
@@ -130,7 +130,7 @@ def defineRLAgent(
     
 
     # Define a sampling_strategy
-    action_limits = jnp.array([[0,100],[0,100],[0,50], [0,50]])
+    action_limits = jnp.array([[0,100],[0,100],[0,50], [0,50], [0.01, 3]])
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
 
     value_function = srl.value_functions.TDReturnsSAC(gamma=0.8, standardize=True)

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6342
+    labview_port = 6344
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  # check with Gaurav
@@ -151,7 +151,7 @@ class GauravExperiment(Engine):
         for _ in range(n_slices):
             action = force_model.calc_action(None)
             action = MPIAction(
-                magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=2
+                magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=action[4]
             )
             self.send_action(action)
             logger.info(f"Action sent: {action}")

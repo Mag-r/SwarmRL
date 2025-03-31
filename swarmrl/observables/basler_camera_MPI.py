@@ -20,7 +20,7 @@ import logging
 from matplotlib import pyplot as plt
 from flax import linen as nn
 import time
-
+from matplotlib import pyplot as plt
 from swarmrl.observables.observable import Observable
 
 logger = logging.getLogger(__name__)
@@ -94,13 +94,13 @@ class BaslerCameraObservable(Observable, ABC):
         self.init_autoencoder(model_path)
         self.threshold = 0.8
         self.init_blob_detector()
-        self.blue_ball_position = None
+        self.blue_ball_position = np.zeros((1, 1, 2))
 
     def init_blob_detector(self):
         blob_detection_params = cv2.SimpleBlobDetector_Params()
         blob_detection_params.filterByArea = True
-        blob_detection_params.maxArea = 50
-        blob_detection_params.minArea = 30
+        blob_detection_params.maxArea = 80
+        blob_detection_params.minArea = 50
         blob_detection_params.filterByCircularity = False
         blob_detection_params.filterByConvexity = False
         blob_detection_params.filterByInertia = False
@@ -135,6 +135,7 @@ class BaslerCameraObservable(Observable, ABC):
         self.camera.Height.SetValue(self.camParam["height"])
         self.camera.OffsetX.SetValue(self.camParam["xOffset"])
         self.camera.OffsetY.SetValue(self.camParam["yOffset"])
+        self.camera.PixelFormat.SetValue("RGB8")
         if not self.camera.PixelFormat().count("Mono"):
             self.camera.LightSourcePreset.SetValue(self.camParam["lightSource"])
             self.camera.BalanceWhiteAuto.SetValue("Off")
@@ -167,8 +168,10 @@ class BaslerCameraObservable(Observable, ABC):
             )
             if grabResult.GrabSucceeded():
                 image = grabResult.GetArray()
-                # image = cv2.cvtColor(image, cv2.COLOR_BAYER_BG2GRAY)
-                image = cv2.resize(image, (self.resolution[0], self.resolution[1], -1))
+                if not self.camParam["colored"]:
+                    image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+                image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
+
                 grabResult.Release()
             else:
                 logger.error("Grab failed.")
@@ -179,7 +182,7 @@ class BaslerCameraObservable(Observable, ABC):
             )
         # self.image_queue.put(image)
         self.track_blue_ball(image)
-        image = cv2.cvtColor(image, cv2.COLOR_BAYER_BG2GRAY)
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         positions = self.extract_positions(image)
         if positions.shape[1] < self.number_particles:
             padding = self.number_particles - positions.shape[1]
@@ -193,10 +196,9 @@ class BaslerCameraObservable(Observable, ABC):
 
     def track_blue_ball(self, image: onp.ndarray):
         image = (image - onp.mean(image)) / onp.std(image)
-        thresholded_image = (
-            (image[:, :, 2] > 0.5) & (image[:, :, 1] < 0.34) & (image[:, :, 0] < 0.4)
-        )
-        keypoints = self.blob_detector.detect(thresholded_image.astype(onp.uint8))
+        
+        thresholded_image = (image[:, :, 2] > 8) 
+        keypoints = self.blob_detector.detect(thresholded_image.astype(onp.uint8) * 255)
         if len(keypoints) == 0:
             logger.warning("no blue ball detected, using previous position")
         else:
@@ -213,16 +215,16 @@ class BaslerCameraObservable(Observable, ABC):
         cleaned_image = self.model_state.apply_fn(self.model_state.params, image)
         processed_image, contours = self.threshold_and_extract_contours(cleaned_image)
 
+        min_length = 0.1
+        contours = [
+            contour for contour in contours if cv2.arcLength(contour, True) > min_length
+        ]
         original_image = onp.array(original_image, dtype=np.uint8)
         cv2.drawContours(original_image, contours, -1, (255, 0, 0), 2)
         self.image_queue.put(original_image)
         # contour_image = cv2.cvtColor(cleaned_image, cv2.COLOR_GRAY2BGR)
         # cv2.drawContours(contour_image, contours, -1, 255, -1)
         # self.image_queue.put(contour_image)
-        min_length = 0.01
-        contours = [
-            contour for contour in contours if cv2.arcLength(contour, True) > min_length
-        ]
         attempts = 0
         while len(contours) != self.number_particles and attempts < 5:
             self.threshold = (

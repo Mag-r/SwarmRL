@@ -305,7 +305,7 @@ class ContinuousActionModel(Network, ABC):
             params=model_params, opt_state=opt_state, step=opt_step
         )
         logger.info(self.model_state.params.keys())
-
+        self.carry = carry
         self.epoch_count = epoch
         # self.carry = carry
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
