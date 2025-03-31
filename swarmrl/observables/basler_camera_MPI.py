@@ -93,6 +93,20 @@ class BaslerCameraObservable(Observable, ABC):
         self.autoencoder = autoencoder
         self.init_autoencoder(model_path)
         self.threshold = 0.8
+        self.init_blob_detector()
+        self.blue_ball_position = None
+
+    def init_blob_detector(self):
+        blob_detection_params = cv2.SimpleBlobDetector_Params()
+        blob_detection_params.filterByArea = True
+        blob_detection_params.maxArea = 50
+        blob_detection_params.minArea = 30
+        blob_detection_params.filterByCircularity = False
+        blob_detection_params.filterByConvexity = False
+        blob_detection_params.filterByInertia = False
+        blob_detection_params.filterByColor = True
+        blob_detection_params.blobColor = 255
+        self.blob_detector = cv2.SimpleBlobDetector_create(blob_detection_params)
 
     def init_autoencoder(self, model_path: str = None):
         dummy_input = jax.random.normal(
@@ -153,9 +167,8 @@ class BaslerCameraObservable(Observable, ABC):
             )
             if grabResult.GrabSucceeded():
                 image = grabResult.GetArray()
-                image = cv2.cvtColor(image, cv2.COLOR_BAYER_BG2GRAY)
-
-                image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
+                # image = cv2.cvtColor(image, cv2.COLOR_BAYER_BG2GRAY)
+                image = cv2.resize(image, (self.resolution[0], self.resolution[1], -1))
                 grabResult.Release()
             else:
                 logger.error("Grab failed.")
@@ -165,6 +178,8 @@ class BaslerCameraObservable(Observable, ABC):
                 f"Image queue is starting to fill. Current size {self.image_queue.qsize()}"
             )
         # self.image_queue.put(image)
+        self.track_blue_ball(image)
+        image = cv2.cvtColor(image, cv2.COLOR_BAYER_BG2GRAY)
         positions = self.extract_positions(image)
         if positions.shape[1] < self.number_particles:
             padding = self.number_particles - positions.shape[1]
@@ -172,7 +187,20 @@ class BaslerCameraObservable(Observable, ABC):
             positions = np.concatenate((positions, padding), axis=1)
         elif positions.shape[1] > self.number_particles:
             positions = positions[:, : self.number_particles, :]
+
+        positions = np.concatenate((positions, self.blue_ball_position), axis=1)
         return positions
+
+    def track_blue_ball(self, image: onp.ndarray):
+        image = (image - onp.mean(image)) / onp.std(image)
+        thresholded_image = (
+            (image[:, :, 2] > 0.5) & (image[:, :, 1] < 0.34) & (image[:, :, 0] < 0.4)
+        )
+        keypoints = self.blob_detector.detect(thresholded_image.astype(onp.uint8))
+        if len(keypoints) == 0:
+            logger.warning("no blue ball detected, using previous position")
+        else:
+            self.blue_ball_position = np.array(keypoints[0].pt).reshape(1, 1, 2)
 
     def extract_positions(self, original_image: np.ndarray) -> np.ndarray:
         """
@@ -186,7 +214,6 @@ class BaslerCameraObservable(Observable, ABC):
         processed_image, contours = self.threshold_and_extract_contours(cleaned_image)
 
         original_image = onp.array(original_image, dtype=np.uint8)
-        contour_image = cv2.cvtColor(original_image, cv2.COLOR_GRAY2BGR)
         cv2.drawContours(original_image, contours, -1, (255, 0, 0), 2)
         self.image_queue.put(original_image)
         # contour_image = cv2.cvtColor(cleaned_image, cv2.COLOR_GRAY2BGR)
@@ -209,10 +236,7 @@ class BaslerCameraObservable(Observable, ABC):
                 cleaned_image
             )
             attempts = attempts + 1
-        # image = np.squeeze(image)
-        # image = np.array(image, dtype=np.uint8)
-        # cv2.drawContours(image, contours, -1, (0, 255, 0), 2)
-        # self.image_queue.put(image)
+
         positions = np.array([cv2.boundingRect(contour) for contour in contours])
         positions = positions[:, :2] + positions[:, 2:] / 2
         if len(positions) != self.number_particles:

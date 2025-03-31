@@ -14,9 +14,9 @@ from swarmrl.engine.gaurav_sim import GauravSim, GauravSimParams
 from swarmrl.trainers.global_continuous_trainer import (
     GlobalContinuousTrainer as Trainer,
 )
+from swarmrl.tasks.ball_movement import ExperimentBallMovingTask
 from swarmrl.engine.gaurav_experiment import GauravExperiment
 from threading import Lock
-
 
 cuda.select_device(0)
 
@@ -56,9 +56,12 @@ action_dimension = 4
 number_particles = 7
 learning_rate = 1e-3
 
-obs = BaslerCameraObservable([resolution, resolution], Autoencoder(), model_path="Models/autoencoder_3_27.pkl")
+obs = BaslerCameraObservable(
+    [resolution, resolution], Autoencoder(), model_path="Models/autoencoder_3_27.pkl"
+)
 # task = ExperimentTask(number_particles=number_particles)
-task = ExperimentHexagonTask(number_particles=number_particles)
+# task = ExperimentHexagonTask(number_particles=number_particles)
+task = ExperimentBallMovingTask()
 
 ureg = pint.UnitRegistry()
 Q_ = ureg.Quantity
@@ -90,9 +93,11 @@ experiment = GauravExperiment(sim)
 
 # %%
 lock = Lock()
-protocol = setupNetwork.defineRLAgent(obs, task, learning_rate=learning_rate, sequence_length=sequence_length, lock = lock)
+protocol = setupNetwork.defineRLAgent(
+    obs, task, learning_rate=learning_rate, sequence_length=sequence_length, lock=lock
+)
 
 protocol.restore_agent(identifier=task.__class__.__name__)
-rl_trainer = Trainer([protocol],lock=lock)
+rl_trainer = Trainer([protocol], lock=lock)
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(experiment, 100, 10)

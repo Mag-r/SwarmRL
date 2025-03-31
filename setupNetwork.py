@@ -99,7 +99,7 @@ class CriticNet(nn.Module):
         q_2 = nn.relu(q_2)
 
         q_1 = nn.Dense(features=1)(q_1)
-        q_2 = nn.Dense(features=1)(q_2)s
+        q_2 = nn.Dense(features=1)(q_2)
         return q_1, q_2
 
 
@@ -136,7 +136,7 @@ def defineRLAgent(
         input_shape=(
             1,
             sequence_length,
-            n_particles,
+            n_particles + 1,
             2,
         ),  # batch implicitly 1 ,time,H,W,channels for conv
         sampling_strategy=sampling_strategy,
@@ -150,7 +150,7 @@ def defineRLAgent(
         input_shape=(
             1,
             sequence_length,
-            n_particles,
+            n_particles + 1,
             2,
         ),  # batch implicitly 1 ,time,H,W,channels for conv
         action_dimension=action_dimension,
@@ -173,4 +173,4 @@ def defineRLAgent(
         max_samples_in_trajectory=1000,
         lock=lock
     )
-    return protocol, 
+    return protocol
