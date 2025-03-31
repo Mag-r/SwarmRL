@@ -8,7 +8,7 @@ import pint
 from flax import linen as nn
 
 from swarmrl.observables.basler_camera_MPI import BaslerCameraObservable
-from swarmrl.tasks.experiment_task import ExperimentTask
+from swarmrl.tasks.experiment_chain import ExperimentChainTask
 from swarmrl.tasks.experiment_hexagon import ExperimentHexagonTask
 from swarmrl.engine.gaurav_sim import GauravSim, GauravSimParams
 from swarmrl.trainers.global_continuous_trainer import (
@@ -57,7 +57,7 @@ number_particles = 7
 learning_rate = 1e-3
 
 obs = BaslerCameraObservable([resolution, resolution], Autoencoder(), model_path="Models/autoencoder_3_27.pkl")
-# task = ExperimentTask(number_particles=number_particles)
+# task = ExperimentChainTask(number_particles=number_particles)
 task = ExperimentHexagonTask(number_particles=number_particles)
 
 ureg = pint.UnitRegistry()

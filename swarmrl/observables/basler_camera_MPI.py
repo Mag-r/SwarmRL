@@ -164,7 +164,7 @@ class BaslerCameraObservable(Observable, ABC):
             logger.warning(
                 f"Image queue is starting to fill. Current size {self.image_queue.qsize()}"
             )
-        # self.image_queue.put(image)
+        self.image_queue.put(image)
         positions = self.extract_positions(image)
         if positions.shape[1] < self.number_particles:
             padding = self.number_particles - positions.shape[1]

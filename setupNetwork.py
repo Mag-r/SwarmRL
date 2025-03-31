@@ -3,9 +3,11 @@ import flax.linen as nn
 import swarmrl as srl
 import optax
 from jax import numpy as jnp
+import logging
 
 import os
 
+logger = logging.getLogger(__name__)
 action_dimension = 4
 
 
@@ -26,18 +28,16 @@ class ActorNet(nn.Module):
         )
         self.lstm = self.ScanLSTM(features=64)
         temperature = self.param(
-            "temperature", lambda key, shape: jnp.full(shape, 0.0), (1,)
+            "temperature", lambda key, shape: jnp.full(shape, jnp.log(0.1)), (1,)
         )
 
     @nn.compact
     def __call__(self, x, previous_actions, carry=None):
         batch_size, sequence_length = x.shape[0], x.shape[1]
-       
-
         x = x.reshape((batch_size, sequence_length, -1))
-        x = (x - jnp.mean(x, keepdims=True)) / jnp.std(
+        x = (x - jnp.mean(x, keepdims=True)) / (jnp.std(
             x, keepdims=True
-        )
+        ) + 1e-6)
         x = jnp.concatenate([x, previous_actions], axis=-1)
         # Initialize carry if it's not provided
         if carry is None:
@@ -75,9 +75,9 @@ class CriticNet(nn.Module):
         batch_size, sequence_length = x.shape[0], x.shape[1]
 
         x = x.reshape((batch_size, sequence_length, -1))
-        x = (x - jnp.mean(x, keepdims=True)) / jnp.std(
+        x = (x - jnp.mean(x, keepdims=True)) / (jnp.std(
             x, keepdims=True
-        )
+        ) + 1e-6)
         x = jnp.concatenate([x, previous_actions], axis=-1)
         # Initialize carry if it's not provided
         if carry is None:
@@ -99,7 +99,7 @@ class CriticNet(nn.Module):
         q_2 = nn.relu(q_2)
 
         q_1 = nn.Dense(features=1)(q_1)
-        q_2 = nn.Dense(features=1)(q_2)s
+        q_2 = nn.Dense(features=1)(q_2)
         return q_1, q_2
 
 
@@ -110,13 +110,17 @@ def defineRLAgent(
 ) -> srl.agents.MPIActorCriticAgent:
     # Define the model
     
-    lr_schedule = optax.exponential_decay(
-        init_value=learning_rate,
-        transition_steps=100,
-        decay_rate=0.99,
-        staircase=True,
-    )
-    optimizer = optax.inject_hyperparams(optax.adam)(learning_rate=lr_schedule)
+    if learning_rate == 0.0:
+        logger.info("Deployment mode")
+        optimizer = optax.adam(learning_rate=0.0)
+    else:
+        lr_schedule = optax.exponential_decay(
+            init_value=learning_rate,
+            transition_steps=100,
+            decay_rate=0.99,
+            staircase=True,
+        )
+        optimizer = optax.inject_hyperparams(optax.adam)(learning_rate=lr_schedule)
 
     actor = ActorNet()
     critic = CriticNet()
@@ -173,4 +177,4 @@ def defineRLAgent(
         max_samples_in_trajectory=1000,
         lock=lock
     )
-    return protocol, 
+    return protocol
