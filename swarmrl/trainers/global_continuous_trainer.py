@@ -36,6 +36,7 @@ class GlobalContinuousTrainer(Trainer):
         self.learning_thread = threading.Thread(target=self.async_update_rl)
         self.interaction_model_queue = queue.LifoQueue()
         self.lock = lock
+        self.sampling_finished = False
 
     def initialize_training(self) -> GlobalForceFunction:
         return GlobalForceFunction(
@@ -44,7 +45,7 @@ class GlobalContinuousTrainer(Trainer):
 
     def async_update_rl(self):
         killed = False
-        while not killed:
+        while not killed and not self.sampling_finished:
             force_fn, current_reward, killed = self.update_rl()
             self.interaction_model_queue.put((force_fn, current_reward, killed))
 
@@ -176,9 +177,9 @@ class GlobalContinuousTrainer(Trainer):
                         logger.info(
                             "Sampling is faster than learning."
                         )
-
             finally:
                 self.engine.finalize()
-                self.learning_thread.join(0.0)
+                self.sampling_finished = True
+                self.learning_thread.join(100.0)
 
         return np.array(rewards)

@@ -2,25 +2,18 @@ import numpy as np
 from numba import cuda
 import pathlib
 import logging
-import setupNetwork
 import os
 import pint
 from flax import linen as nn
 
-from swarmrl.observables.basler_camera_MPI import BaslerCameraObservable
-from swarmrl.tasks.experiment_task import ExperimentTask
-from swarmrl.engine.gaurav_sim import GauravSim, GauravSimParams
+from swarmrl.engine.offline_learning import OfflineLearning
 from swarmrl.trainers.global_continuous_trainer import (
     GlobalContinuousTrainer as Trainer,
 )
-from swarmrl.engine.gaurav_experiment import GauravExperiment
 import jax
-import flax.linen as nn
 import swarmrl as srl
 import optax
 from jax import numpy as jnp
-
-import os
 
 
 cuda.select_device(0)
@@ -57,8 +50,8 @@ class ActorNet(nn.Module):
     @nn.compact
     def __call__(self, x, previous_actions, carry=None):
         batch_size, sequence_length = x.shape[0], x.shape[1]
-       
 
+        x = (x - jnp.mean(x, keepdims=True)) / (jnp.std(x, keepdims=True) + 1e-6)
         x = x.reshape((batch_size, sequence_length, -1))
 
         x = jnp.concatenate([x, previous_actions], axis=-1)
@@ -96,7 +89,7 @@ class CriticNet(nn.Module):
     @nn.compact
     def __call__(self, x, previous_actions, action, carry=None):
         batch_size, sequence_length = x.shape[0], x.shape[1]
-
+        x = (x - x.mean(keepdims=True)) / (x.std(keepdims=True) + 1e-8)
         x = x.reshape((batch_size, sequence_length, -1))
 
         x = jnp.concatenate([x, previous_actions], axis=-1)
@@ -124,38 +117,17 @@ class CriticNet(nn.Module):
         return q_1, q_2
 
 
-
-
-
 sequence_length = 3
 resolution = 253
 action_dimension = 4
 number_particles = 7
-learning_rate = 1e-6
+learning_rate = 1e-3
 
-obs = None
-task = None
+obs = srl.observables.Observable(0)
+task = srl.tasks.Task()
 
-ureg = pint.UnitRegistry()
-Q_ = ureg.Quantity
 
-# Define parameters in SI units
-params = GauravSimParams(
-    ureg=ureg,
-    box_length=Q_(10000, "micrometer"),
-    time_step=Q_(1e-2, "second"),
-    time_slice=Q_(1e-1, "second"),
-    snapshot_interval=Q_(0.002, "second"),
-    raft_radius=Q_(150, "micrometer"),
-    raft_repulsion_strength=Q_(1e-7, "newton"),
-    dynamic_viscosity=Q_(1e-3, "Pa * s"),
-    fluid_density=Q_(1000, "kg / m**3"),
-    lubrication_threshold=Q_(15, "micrometer"),
-    magnetic_constant=Q_(4 * np.pi * 1e-7, "newton /ampere**2"),
-    capillary_force_data_path=pathlib.Path(
-        "/home/gardi/Downloads/spinning_rafts_sim2/2019-05-13_capillaryForceCalculations-sym6/capillaryForceAndTorque_sym6"
-    ),
-)
+
 lr_schedule = optax.exponential_decay(
     init_value=learning_rate,
     transition_steps=100,
@@ -172,8 +144,10 @@ exploration_policy = srl.exploration_policies.GlobalOUExploration(
 
 
 # Define a sampling_strategy
-action_limits = jnp.array([[0,100],[0,100],[0,50], [0,50]])
-sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
+action_limits = jnp.array([[0, 100], [0, 100], [0, 50], [0, 50]])
+sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(
+    action_dimension=action_dimension, action_limits=action_limits
+)
 
 value_function = srl.value_functions.TDReturnsSAC(gamma=0.8, standardize=True)
 n_particles = 7
@@ -219,15 +193,11 @@ protocol = srl.agents.MPIActorCriticAgent(
     max_samples_in_trajectory=1000,
 )
 # Initialize the simulation system
-sim = GauravSim(
-    params=params, out_folder="./", with_precalc_capillary=False, save_h5=False
-)
 
-experiment = GauravExperiment(sim)
+engine = OfflineLearning()
 
-
-protocol.restore_agent()
-protocol.restore_trajectory()
+protocol.restore_agent(identifier="ExperimentHexagonTask")
+protocol.restore_trajectory(identifier="ExperimentHexagonTask_episode_9")
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
-reward = rl_trainer.perform_rl_training(experiment, 100, 30)
+reward = rl_trainer.perform_rl_training(engine, 100, 30)
