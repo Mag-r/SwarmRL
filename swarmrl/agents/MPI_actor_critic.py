@@ -165,6 +165,7 @@ class MPIActorCriticAgent(Agent):
 
         trajectory_data = {
             "features": self.trajectory.features,
+            "feature_sequence": self.trajectory.feature_sequence,
             "actions": self.trajectory.actions,
             "rewards": self.trajectory.rewards,
             "carry": self.trajectory.carry,
@@ -177,6 +178,31 @@ class MPIActorCriticAgent(Agent):
         filename = os.path.join(directory, f"trajectory_{identifier}.pkl")
         with open(filename, "wb") as f:
             pickle.dump(trajectory_data, f)
+
+    def restore_trajectory(
+        self, directory: str = "training_data", identifier: str = "trajectory"
+    ):
+        """
+        Restore the trajectory of the agent.
+
+        Parameters
+        ----------
+        directory : str
+                Location to restore the trajectory.
+        """
+        filename = os.path.join(directory, f"trajectory_{identifier}.pkl")
+        with open(filename, "rb") as f:
+            trajectory_data = pickle.load(f)
+
+        self.trajectory.features = trajectory_data["features"]
+        self.trajectory.feature_sequence = trajectory_data["feature_sequence"]
+        self.trajectory.actions = trajectory_data["actions"]
+        self.trajectory.rewards = trajectory_data["rewards"]
+        self.trajectory.carry = trajectory_data["carry"]
+        self.trajectory.next_features = trajectory_data["next_features"]
+        self.trajectory.next_carry = trajectory_data["next_carry"]
+        self.trajectory.action_sequence = trajectory_data["action_sequence"]
+        self.trajectory.killed = trajectory_data["killed"]
 
     def remove_old_data(self, remove: int):
         """Remove old data from the trajectory. The last 10 are always kept.
@@ -191,7 +217,7 @@ class MPIActorCriticAgent(Agent):
             probabilities = probabilities.at[-10:].set(0)
 
             key = jax.random.PRNGKey(0)
-            remove = np.min([remove, indices.shape[0]-10])
+            remove = np.min([remove, indices.shape[0] - 10])
             selected_indices = jax.random.choice(
                 key, indices, shape=(remove,), replace=False, p=probabilities
             )

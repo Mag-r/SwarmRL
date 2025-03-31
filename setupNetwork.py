@@ -35,7 +35,9 @@ class ActorNet(nn.Module):
        
 
         x = x.reshape((batch_size, sequence_length, -1))
-
+        x = (x - jnp.mean(x, keepdims=True)) / jnp.std(
+            x, keepdims=True
+        )
         x = jnp.concatenate([x, previous_actions], axis=-1)
         # Initialize carry if it's not provided
         if carry is None:
@@ -73,7 +75,9 @@ class CriticNet(nn.Module):
         batch_size, sequence_length = x.shape[0], x.shape[1]
 
         x = x.reshape((batch_size, sequence_length, -1))
-
+        x = (x - jnp.mean(x, keepdims=True)) / jnp.std(
+            x, keepdims=True
+        )
         x = jnp.concatenate([x, previous_actions], axis=-1)
         # Initialize carry if it's not provided
         if carry is None:
@@ -95,14 +99,14 @@ class CriticNet(nn.Module):
         q_2 = nn.relu(q_2)
 
         q_1 = nn.Dense(features=1)(q_1)
-        q_2 = nn.Dense(features=1)(q_2)
+        q_2 = nn.Dense(features=1)(q_2)s
         return q_1, q_2
 
 
 
 
 def defineRLAgent(
-    obs, task: srl.tasks.Task, learning_rate: float, resolution=506, sequence_length=4, lock=None
+    obs, task: srl.tasks.Task, learning_rate: float, resolution: int=506, sequence_length: int=4, n_particles: int = 7, lock=None
 ) -> srl.agents.MPIActorCriticAgent:
     # Define the model
     
@@ -126,7 +130,6 @@ def defineRLAgent(
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
 
     value_function = srl.value_functions.TDReturnsSAC(gamma=0.8, standardize=True)
-    n_particles = 7
     actor_network = srl.networks.ContinuousActionModel(
         flax_model=actor,
         optimizer=optimizer,
@@ -170,4 +173,4 @@ def defineRLAgent(
         max_samples_in_trajectory=1000,
         lock=lock
     )
-    return protocol
+    return protocol, 

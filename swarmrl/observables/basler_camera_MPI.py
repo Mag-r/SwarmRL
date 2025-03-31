@@ -215,9 +215,6 @@ class BaslerCameraObservable(Observable, ABC):
         # self.image_queue.put(image)
         positions = np.array([cv2.boundingRect(contour) for contour in contours])
         positions = positions[:, :2] + positions[:, 2:] / 2
-
-        positions = (positions - positions.mean()) / positions.std()
-
         if len(positions) != self.number_particles:
             logger.warning(
                 f"Number of particles detected {len(positions)} is not equal to the expected number of particles {self.number_particles}."
