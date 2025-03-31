@@ -140,7 +140,7 @@ def defineRLAgent(
         input_shape=(
             1,
             sequence_length,
-            n_particles,
+            n_particles + 1,
             2,
         ),  # batch implicitly 1 ,time,H,W,channels for conv
         sampling_strategy=sampling_strategy,
@@ -154,7 +154,7 @@ def defineRLAgent(
         input_shape=(
             1,
             sequence_length,
-            n_particles,
+            n_particles + 1,
             2,
         ),  # batch implicitly 1 ,time,H,W,channels for conv
         action_dimension=action_dimension,

@@ -9,6 +9,7 @@ from swarmrl.tasks.dummy_task import DummyTask
 from swarmrl.tasks.MPI_chain import ChainTask
 from swarmrl.tasks.experiment_chain import ExperimentChainTask
 from swarmrl.tasks.experiment_hexagon import ExperimentHexagonTask
+from swarmrl.tasks.ball_movement import ExperimentBallMovingTask
 
 __all__ = [
     searching.__name__,
@@ -19,4 +20,5 @@ __all__ = [
     ChainTask.__name__,
     ExperimentChainTask.__name__,
     ExperimentHexagonTask.__name__,
+    ExperimentBallMovingTask
 ]
