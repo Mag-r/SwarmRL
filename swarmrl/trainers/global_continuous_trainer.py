@@ -31,12 +31,14 @@ class GlobalContinuousTrainer(Trainer):
         self,
         agents: List[MPIActorCriticAgent],
         lock: threading.Lock = threading.Lock(),
+        deployment_mode: bool = False,
     ):
         super().__init__(agents)
         self.learning_thread = threading.Thread(target=self.async_update_rl)
         self.interaction_model_queue = queue.LifoQueue()
         self.lock = lock
         self.sampling_finished = False
+        self.deployment_mode = deployment_mode
 
     def initialize_training(self) -> GlobalForceFunction:
         return GlobalForceFunction(
@@ -134,7 +136,7 @@ class GlobalContinuousTrainer(Trainer):
             try:
                 for episode in range(n_episodes):
                     self.engine.integrate(episode_length, force_fn)
-                    if episode == 0:
+                    if episode == 0 and not self.deployment_mode:
                         self.learning_thread.start()
                     if not self.interaction_model_queue.empty():
                         force_fn, current_reward, killed = (

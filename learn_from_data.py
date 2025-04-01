@@ -15,7 +15,6 @@ import swarmrl as srl
 import optax
 from jax import numpy as jnp
 
-
 cuda.select_device(0)
 
 logging.basicConfig(
@@ -124,8 +123,7 @@ number_particles = 7
 learning_rate = 1e-3
 
 obs = srl.observables.Observable(0)
-task = srl.tasks.Task()
-
+task = srl.tasks.ExperimentHexagonTask(number_particles)
 
 
 lr_schedule = optax.exponential_decay(
