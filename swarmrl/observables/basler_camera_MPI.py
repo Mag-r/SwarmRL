@@ -39,7 +39,7 @@ class BaslerCameraObservable(Observable, ABC):
         "exposureTime": 5000,
         "width": 2048,
         "height": 2048,
-        "xOffset": 128,
+        "xOffset": 0,
         "yOffset": 0,
         "xReverse": False,
         "yReverse": False,
@@ -99,8 +99,8 @@ class BaslerCameraObservable(Observable, ABC):
     def init_blob_detector(self):
         blob_detection_params = cv2.SimpleBlobDetector_Params()
         blob_detection_params.filterByArea = True
-        blob_detection_params.maxArea = 80
-        blob_detection_params.minArea = 50
+        blob_detection_params.maxArea = 110
+        blob_detection_params.minArea = 70
         blob_detection_params.filterByCircularity = False
         blob_detection_params.filterByConvexity = False
         blob_detection_params.filterByInertia = False
@@ -215,7 +215,7 @@ class BaslerCameraObservable(Observable, ABC):
         cleaned_image = self.model_state.apply_fn(self.model_state.params, image)
         processed_image, contours = self.threshold_and_extract_contours(cleaned_image)
 
-        min_length = 0.1
+        min_length = 4
         contours = [
             contour for contour in contours if cv2.arcLength(contour, True) > min_length
         ]

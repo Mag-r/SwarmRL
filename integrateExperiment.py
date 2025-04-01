@@ -14,7 +14,7 @@ from swarmrl.engine.gaurav_sim import GauravSim, GauravSimParams
 from swarmrl.trainers.global_continuous_trainer import (
     GlobalContinuousTrainer as Trainer,
 )
-from swarmrl.tasks.ball_movement import ExperimentBallMovingTask
+from swarmrl.tasks.ball_movement_task import ExperimentBallMovingTask
 from swarmrl.engine.gaurav_experiment import GauravExperiment
 from threading import Lock
 
@@ -98,6 +98,6 @@ protocol = setupNetwork.defineRLAgent(
 )
 
 # protocol.restore_agent(identifier=task.__class__.__name__)
-rl_trainer = Trainer([protocol], lock=lock)
+rl_trainer = Trainer([protocol], lock=lock, deployment_mode=False)
 print("start training", flush=True)
-reward = rl_trainer.perform_rl_training(experiment, 100, 10)
+reward = rl_trainer.perform_rl_training(experiment, 1000, 10)
