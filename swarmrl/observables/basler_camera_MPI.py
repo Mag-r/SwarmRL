@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 class BaslerCameraObservable(Observable, ABC):
     """
     Class to receive images from Gauravs Camera.
-    some abuse of the observable class to return the image directly.
+    Detects the colloids in the image and returns their positions.
+    The camera is a Basler acA40011027-USB3.
     """
 
     camParam = {
@@ -97,6 +98,9 @@ class BaslerCameraObservable(Observable, ABC):
         self.blue_ball_position = np.zeros((1, 1, 2))
 
     def init_blob_detector(self):
+        """
+        Initialize the blob detector.
+        """
         blob_detection_params = cv2.SimpleBlobDetector_Params()
         blob_detection_params.filterByArea = True
         blob_detection_params.maxArea = 80
@@ -109,6 +113,12 @@ class BaslerCameraObservable(Observable, ABC):
         self.blob_detector = cv2.SimpleBlobDetector_create(blob_detection_params)
 
     def init_autoencoder(self, model_path: str = None):
+        """Initialize the autoencoder.
+        This method initializes the autoencoder model and loads the parameters from a file if provided.
+
+        Args:
+            model_path (str, optional): _description_. Defaults to None.
+        """
         dummy_input = jax.random.normal(
             jax.random.PRNGKey(0), (1, self.resolution[0], self.resolution[1], 1)
         )

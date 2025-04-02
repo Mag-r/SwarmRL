@@ -49,17 +49,23 @@ class MPIActorCriticAgent(Agent):
         Parameters
         ----------
         particle_type : int
-                Particle ID this RL protocol applies to.
-        observable : Observable
-                Observable for this particle type and network input
+                Particle type of the agent.
+        actor_network : Network
+                Actor network to use.
+        critic_network : Network
+                Critic network to use (includes the target).
         task : Task
-                Task for this particle type to perform.
-        loss : Loss (default=ProximalPolicyLoss)
-                Loss function to use to update the networks.
+                Task to use for the agent.
+        observable : Observable
+                Observable to use for the agent.
+        loss : Loss (default=GlobalPolicyGradientLoss())
+                Loss function to use for the agent.
         train : bool (default=True)
-                Flag to indicate if the agent is training.
+                Whether or not to train the agent.
         intrinsic_reward : IntrinsicReward (default=None)
                 Intrinsic reward to use for the agent.
+        max_samples_in_trajectory : int (default=200)
+                Maximum number of samples saved in the trajectory.
         """
         # Properties of the agent.
         self.actor_network = actor_network
@@ -75,8 +81,6 @@ class MPIActorCriticAgent(Agent):
         # Trajectory to be updated.
         self.trajectory = GlobalTrajectoryInformation()
         self.max_samples_in_trajectory = max_samples_in_trajectory
-        # self.trajectory.actions = np.array([0,0,0.1])
-        # self.trajectory.actions = np.expand_dims(self.trajectory.actions, axis=0)
 
     def __name__(self) -> str:
         """
@@ -91,7 +95,7 @@ class MPIActorCriticAgent(Agent):
 
     def update_agent(self) -> tuple:
         """
-        Update the agents network.
+        The main learning step for the agent. Performs one training step.
 
         Returns
         -------
@@ -123,9 +127,6 @@ class MPIActorCriticAgent(Agent):
             self.remove_old_data(
                 self.trajectory.features.shape[1] - self.max_samples_in_trajectory
             )
-
-        # self.trajectory = GlobalTrajectoryInformation()
-
         return rewards, killed
 
     def reset_agent(self, colloids: typing.List[Colloid]):
@@ -153,12 +154,15 @@ class MPIActorCriticAgent(Agent):
         self, directory: str = "training_data", identifier: str = "trajectory"
     ):
         """
-        Save the trajectory of the agent.
+        Save the trajectory of the agent, to be used for later training.
+        Saved in /<directory>/trajectory_<identifier>.pkl
 
         Parameters
         ----------
         directory : str
                 Location to save the trajectory.
+        identifier : str
+                Identifier for the trajectory.
         """
         if not os.path.exists(directory):
             os.makedirs(directory)
@@ -189,6 +193,8 @@ class MPIActorCriticAgent(Agent):
         ----------
         directory : str
                 Location to restore the trajectory.
+        identifier : str
+                Identifier for the trajectory.
         """
         filename = os.path.join(directory, f"trajectory_{identifier}.pkl")
         with open(filename, "rb") as f:
@@ -261,14 +267,16 @@ class MPIActorCriticAgent(Agent):
         self.actor_network.reinitialize_network()
         self.critic_network.reinitialize_network()
 
-    def save_agent(self, directory: str = "Models", identifier: str = ""):
+    def save_agent(self, directory: str = "Models", identifier: str = "") -> None:
         """
         Save the agent network state.
 
         Parameters
-        ----------swarmrl/losses/global_policy_gradient_loss.py
+        ----------
         directory : str
                 Location to save the models.
+        identifier : str
+                Identifier for the models.
         """
         self.actor_network.export_model(
             filename=f"{self.__name__()}_{self.particle_type}_actor_{identifier}",
@@ -279,9 +287,17 @@ class MPIActorCriticAgent(Agent):
             directory=directory,
         )
 
-    def restore_agent(self, directory: str = "Models", identifier: str = ""):
+    def restore_agent(self, directory: str = "Models", identifier: str = "") -> None:
         """
         Restore the agent state from a directory.
+
+
+        Parameters
+        ----------
+        directory : str
+                Location to restore the models.
+        identifier : str
+                Identifier for the models.
         """
         self.actor_network.restore_model_state(
             filename=f"{self.__name__()}_{self.particle_type}_actor_{identifier}",
@@ -303,7 +319,7 @@ class MPIActorCriticAgent(Agent):
         colloids : List[Colloid]
                 List of colloids in the system.
         external_reward : float (default=0.0)
-                External reward to add to the reward. Neede for Benchmark.
+                External reward to add to the reward. Needed for Benchmark.
 
         Returns
         -------
@@ -326,12 +342,17 @@ class MPIActorCriticAgent(Agent):
         Copmute the new state for the agent.
 
         Returns the chosen action to the force function which
-        talks to the espresso engine.
+        talks to the engine.
 
         Parameters
         ----------
         colloids : List[Colloid]
                 List of colloids in the system.
+                
+        Returns
+        -------
+        action : List[Action]
+                Action to take.
         """
         state_description, latest_observation = self.state_description(colloids)
         if colloids is None:
@@ -369,7 +390,14 @@ class MPIActorCriticAgent(Agent):
         self.kill_switch = self.task.kill_switch
         return np.squeeze(action)
 
-    def assemble_previous_actions(self):
+    def assemble_previous_actions(self) -> np.ndarray:
+        """Orders the previous actions to be used in the network.
+        If the trajectory is smaller than the sequence length, it
+        fills the previous actions with zeros.  
+
+        Returns:
+            np.ndarray: Previous actions to be used in the network.
+        """
         if self.trajectory.actions.shape[0] >= self.actor_network.sequence_length:
             previous_actions = self.trajectory.actions[
                 -self.actor_network.sequence_length :
@@ -394,7 +422,16 @@ class MPIActorCriticAgent(Agent):
             )
         return np.expand_dims(previous_actions, axis=0)  # Add batch dimension
 
-    def state_description(self, colloids):
+    def state_description(self, colloids) -> tuple[np.ndarray, np.ndarray]:
+        """Calculates the observable and concate it into the state description.
+        It also updates the trajectory with the new observable.
+
+        Args:
+            colloids (_type_): The colloids to be used in the observable.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: The state description and the latest observable.
+        """
         latest_observable = self.observable.compute_observable(colloids)
         latest_observable = np.expand_dims(latest_observable, axis=1)
         if self.trajectory.features.size == 0 and self.train:

@@ -33,6 +33,7 @@ class ActorNet(nn.Module):
     """
 
     def setup(self):
+        self.bn = nn.BatchNorm()
         # Define a scanned LSTM cell
         self.ScanLSTM = nn.scan(
             nn.OptimizedLSTMCell,
@@ -47,7 +48,7 @@ class ActorNet(nn.Module):
         )
 
     @nn.compact
-    def __call__(self, x, previous_actions, carry=None):
+    def __call__(self, x, previous_actions, carry=None, train: bool = True):
         batch_size, sequence_length = x.shape[0], x.shape[1]
 
         x = (x - jnp.mean(x, keepdims=True)) / (jnp.std(x, keepdims=True) + 1e-6)
@@ -62,7 +63,7 @@ class ActorNet(nn.Module):
             print("Action Net: new carry initialized")
         carry, x = self.lstm(carry, x)
         x = x.reshape((batch_size, -1))
-
+        x = self.bn(x, use_running_average=not train)
         actor = nn.Dense(features=64, name="Actor_1")(x)
         actor = nn.relu(actor)
         actor = nn.Dense(features=64, name="Actor_2")(actor)
@@ -75,7 +76,7 @@ class ActorNet(nn.Module):
 
 class CriticNet(nn.Module):
     def setup(self):
-        # Define a scanned LSTM cell
+        self.bn = nn.BatchNorm()
         self.ScanLSTM = nn.scan(
             nn.OptimizedLSTMCell,
             variable_broadcast="params",
@@ -86,13 +87,13 @@ class CriticNet(nn.Module):
         self.lstm = self.ScanLSTM(features=64)
 
     @nn.compact
-    def __call__(self, x, previous_actions, action, carry=None):
+    def __call__(self, x, previous_actions, action, carry=None, train: bool = True):
         batch_size, sequence_length = x.shape[0], x.shape[1]
         x = (x - x.mean(keepdims=True)) / (x.std(keepdims=True) + 1e-8)
         x = x.reshape((batch_size, sequence_length, -1))
 
         x = jnp.concatenate([x, previous_actions], axis=-1)
-        # Initialize carry if it's not provided
+
         if carry is None:
             carry = self.lstm.initialize_carry(
                 jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
@@ -100,6 +101,10 @@ class CriticNet(nn.Module):
             print("Action Net: new carry initialized")
         carry, x = self.lstm(carry, x)
         x = x.reshape((batch_size, -1))
+
+        # Hier BatchNorm mit train-Flag nutzen
+        x = self.bn(x, use_running_average=not train)
+
         x = jnp.concatenate([x, action], axis=-1)
 
         q_1 = nn.Dense(features=64)(x)
@@ -194,8 +199,8 @@ protocol = srl.agents.MPIActorCriticAgent(
 
 engine = OfflineLearning()
 
-protocol.restore_agent(identifier="ExperimentHexagonTask")
+# protocol.restore_agent(identifier="ExperimentHexagonTask")
 protocol.restore_trajectory(identifier="ExperimentHexagonTask_episode_9")
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
-reward = rl_trainer.perform_rl_training(engine, 100, 30)
+reward = rl_trainer.perform_rl_training(engine, 100, 3)

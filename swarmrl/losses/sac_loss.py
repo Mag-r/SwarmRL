@@ -86,7 +86,7 @@ class SoftActorCriticGradientLoss(Loss):
         """
         # line 13
         log_temp = actor_network_params["temperature"]
-        desired_q_value = self._calculate_desired_q_value(
+        desired_q_value, updated_batch_stats_target = self._calculate_desired_q_value(
             critic_network,
             actor_network_params,
             actor_network,
@@ -97,7 +97,7 @@ class SoftActorCriticGradientLoss(Loss):
             log_temp,
         )
 
-        (critic_loss, critic_loss_per_sample), critic_grad = jax.value_and_grad(
+        (critic_loss, (critic_loss_per_sample, updated_batch_stats_critic)), critic_grad = jax.value_and_grad(
             self._calculate_critic_loss, has_aux=True
         )(
             critic_network_params,
@@ -112,7 +112,7 @@ class SoftActorCriticGradientLoss(Loss):
         # line 14
         (
             actor_loss,
-            (log_probs, actor_loss_per_sample),
+            (log_probs, actor_loss_per_sample, updated_batch_stats_actor),
         ), actor_grad = jax.value_and_grad(self._calculate_actor_loss, has_aux=True)(
             actor_network_params,
             actor_network,
@@ -137,9 +137,11 @@ class SoftActorCriticGradientLoss(Loss):
 
         assert actor_grad["temperature"] == 0
 
-        critic_network.update_model(critic_grad)
-        actor_network.update_model(actor_grad)
+        critic_network.update_model(critic_grad, updated_batch_stats=updated_batch_stats_critic)
+        
+        actor_network.update_model(actor_grad, updated_batch_stats=updated_batch_stats_actor)
         actor_network.update_model(temperature_grad)
+        
         critic_network.polyak_averaging(self.polyak_averaging_tau)
         return actor_loss, critic_loss, temperature_loss, error_predicted_reward
 
@@ -154,7 +156,7 @@ class SoftActorCriticGradientLoss(Loss):
         ) / len(mean_actor_grad)
         return mean_critic_grad, mean_actor_grad
 
-    @partial(jax.jit, static_argnames=["self", "critic_network", "actor_network"])
+    # @partial(jax.jit, static_argnames=["self", "critic_network", "actor_network"])
     def _calculate_actor_loss(
         self,
         actor_network_params,
@@ -166,10 +168,10 @@ class SoftActorCriticGradientLoss(Loss):
         action_sequence,
         log_temp,
     ):
-        actions, log_probs = actor_network.compute_action_training(
+        actions, log_probs, updated_batch_stats_actor = actor_network.compute_action_training(
             actor_network_params, feature_data, action_sequence[:, :-1, :], carry
         )
-        first_q_value, second_q_value = critic_network.compute_q_values_critic(
+        first_q_value, second_q_value, _ = critic_network.compute_q_values_critic(
             critic_network_params,
             feature_data,
             actions,
@@ -180,9 +182,9 @@ class SoftActorCriticGradientLoss(Loss):
         assert jnp.shape(first_q_value) == jnp.shape(log_probs)
         actor_loss = jnp.exp(log_temp) * log_probs - jnp.minimum(first_q_value, second_q_value)
         assert jnp.shape(actor_loss) == jnp.shape(first_q_value)
-        return jnp.mean(actor_loss), (log_probs, actor_loss)
+        return jnp.mean(actor_loss), (log_probs, actor_loss, updated_batch_stats_actor)
 
-    @partial(jax.jit, static_argnames=["self", "critic_network"])
+    # @partial(jax.jit, static_argnames=["self", "critic_network"])
     def _calculate_critic_loss(
         self,
         critic_network_params: FrozenDict,
@@ -209,7 +211,7 @@ class SoftActorCriticGradientLoss(Loss):
         """
         logger.debug(f"{jnp.shape(feature_data)=}")
         logger.debug(f"feature data = {feature_data}")
-        first_q_value, second_q_value = critic_network.compute_q_values_critic(
+        first_q_value, second_q_value, updated_batch_stats_critic = critic_network.compute_q_values_critic(
             critic_network_params,
             feature_data,
             actions,
@@ -229,9 +231,9 @@ class SoftActorCriticGradientLoss(Loss):
         logger.debug(
             f"shape of all = {jnp.shape(critic_loss)}, {jnp.shape(desired_q_value)}, {jnp.shape(first_q_value)}, {jnp.shape(second_q_value)}"
         )
-        return jnp.mean(critic_loss), critic_loss
+        return jnp.mean(critic_loss), (critic_loss, updated_batch_stats_critic)
 
-    @partial(jax.jit, static_argnames=["self", "critic_network", "actor_network"])
+    # @partial(jax.jit, static_argnames=["self", "critic_network", "actor_network"])
     def _calculate_desired_q_value(
         self,
         critic_network,
@@ -243,14 +245,14 @@ class SoftActorCriticGradientLoss(Loss):
         action_sequence,
         log_temp,
     ):
-        next_action, next_log_probs = actor_network.compute_action_training(
+        next_action, next_log_probs, _ = actor_network.compute_action_training(
             actor_network_params,
             next_feature_data,
             action_sequence[:, 1:, :],
             next_carry,
         )
         next_log_probs = jnp.expand_dims(next_log_probs, axis=-1)
-        first_q_value, second_q_value = critic_network.compute_q_values_target(
+        first_q_value, second_q_value, updated_batch_stats_target = critic_network.compute_q_values_target(
             next_feature_data,
             next_action,
             action_sequence[:, 1:, :],
@@ -266,9 +268,9 @@ class SoftActorCriticGradientLoss(Loss):
         desired_q_value = jax.lax.stop_gradient(desired_q_value)
         assert jnp.shape(desired_q_value) == jnp.shape(first_q_value)
         assert jnp.shape(desired_q_value) == jnp.shape(next_log_probs)
-        return desired_q_value
+        return desired_q_value, updated_batch_stats_target
 
-    @partial(jax.jit, static_argnames=["self"])
+    # @partial(jax.jit, static_argnames=["self"])
     def _calculate_temperature_loss(self, actor_network_params, log_probs):
         temperature = actor_network_params["temperature"]
         return -jnp.mean(

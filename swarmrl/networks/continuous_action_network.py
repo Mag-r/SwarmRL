@@ -13,9 +13,9 @@ import jax.numpy as np
 import numpy as onp
 from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict
-from flax.training.train_state import TrainState
 from optax._src.base import GradientTransformation
 
+from swarmrl.networks.custom_train_state import CustomTrainState
 from swarmrl.exploration_policies.exploration_policy import ExplorationPolicy
 from swarmrl.exploration_policies.random_exploration import RandomExploration
 from swarmrl.networks.network import Network
@@ -74,9 +74,9 @@ class ContinuousActionModel(Network, ABC):
         self.sampling_strategy = sampling_strategy
         self.model = flax_model
 
-        self.apply_fn = (
-            self.model.apply
-        )  # jax.jit(jax.vmap(self.model.apply, in_axes=(None, 0, 0, 0)))
+        # self.apply_fn = (
+        #     self.model.apply
+        # )  # jax.jit(jax.vmap(self.model.apply, in_axes=(None, 0, 0, 0)))
         self.input_shape = input_shape
         self.model_state = None
         self.action_dimension = action_dimension
@@ -97,9 +97,9 @@ class ContinuousActionModel(Network, ABC):
         """
         Deal with the optimizers in case of complex configuration.
         """
-        return type("TrainState", (TrainState,), optimizer)
+        return type("TrainState", (CustomTrainState,), optimizer)
 
-    def _create_train_state(self, init_rng: int) -> TrainState:
+    def _create_train_state(self, init_rng: int) -> CustomTrainState:
         """
         Create a training state of the model.
 
@@ -114,13 +114,16 @@ class ContinuousActionModel(Network, ABC):
                 initial state of model to then be trained.
                 If you have multiple optimizers, this will create a custom train state.
         """
-        params = self.model.init(
+        variables = self.model.init(
             init_rng,
             np.ones(list(self.input_shape)),
             np.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
-        )["params"]
+            
+        )
+        params = variables["params"]
+        batch_stats = variables["batch_stats"]
         model_summary = self.model.tabulate(
             jax.random.PRNGKey(1),
             np.ones(list(self.input_shape)),
@@ -130,25 +133,29 @@ class ContinuousActionModel(Network, ABC):
         )
         print(model_summary)
         *_, self.carry = self.model.apply(
-            {"params": params},
+            {"params": params, "batch_stats": batch_stats},
             np.ones(list(self.input_shape)),
             np.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
             self.carry,
+            train=False,
         )
         self.carry = np.array([self.carry[0][0], self.carry[1][0]])
         self.carry = np.expand_dims(self.carry, axis=1)
         self.carry = tuple(self.carry)
         if isinstance(self.optimizer, dict):
-            CustomTrainState = self._create_custom_train_state(self.optimizer)
-
-            return CustomTrainState.create(
-                apply_fn=self.model.apply, params=params, tx=self.optimizer
-            )
+            raise NotImplementedError
+            # CustomTrainState = self._create_custom_train_state(self.optimizer)
+            # return CustomTrainState.create(
+            #     apply_fn=self.model.apply, params=params, tx=self.optimizer
+            # )
         else:
-            return TrainState.create(
-                apply_fn=self.model.apply, params=params, tx=self.optimizer
+            return CustomTrainState.create(
+                apply_fn=self.model.apply,
+                params=params,
+                tx=self.optimizer,
+                batch_stats=batch_stats,
             )
 
     def reinitialize_network(self):
@@ -160,7 +167,8 @@ class ContinuousActionModel(Network, ABC):
         _, subkey = jax.random.split(init_rng)
         self.model_state = self._create_train_state(subkey)
 
-    def update_model(self, grads):
+    
+    def update_model(self, grads, updated_batch_stats = None):
         """
         Train the model.
 
@@ -173,14 +181,20 @@ class ContinuousActionModel(Network, ABC):
             raise NotImplementedError
         else:
             self.model_state = self.model_state.apply_gradients(grads=grads)
-
+        if updated_batch_stats is None:
+            updated_batch_stats = self.model_state.batch_stats
+        self.model_state = self.model_state.replace(
+            batch_stats=updated_batch_stats
+        )  # Update batch stats
         # Logging for post-train model state
         logger.debug(f"{self.model_state=}")
         logger.debug("Model updated")
         self.epoch_count += 1
 
     def split_rng_key(self):
-        self.rng_key_sampling_strategy, _ = jax.random.split(self.rng_key_sampling_strategy)
+        self.rng_key_sampling_strategy, _ = jax.random.split(
+            self.rng_key_sampling_strategy
+        )
 
     def compute_action_training(
         self,
@@ -210,39 +224,57 @@ class ContinuousActionModel(Network, ABC):
         self.iteration += 1
         subkey = jax.random.fold_in(self.rng_key_sampling_strategy, self.iteration)
         try:
-            logits, _ = self.apply_fn(
-                {"params": params},
+            (logits, _), batch_stats_update = self.model_state.apply_fn(
+                {"params": params, "batch_stats": self.model_state.batch_stats},
                 np.array(observables),
                 np.array(previous_actions),
                 carry,
+                not self.deployment_mode,
+                mutable=["batch_stats"],
             )
         except AttributeError:  # We need this for loaded models.
-            logits, _ = self.apply_fn(
-                {"params": self.model_state["params"]},
+            (logits, _), batch_stats_update = self.model_state.apply_fn(
+                {
+                    "params": self.model_state["params"],
+                    "batch_stats": self.model_state["batch_stats"],
+                },
                 np.array(observables),
                 np.array(previous_actions),
                 carry,
+                mutable=["batch_stats"],
             )
-        action, log_probs = self.sampling_strategy(logits, subkey=subkey, calculate_log_probs=True)
-        return action, log_probs
+        # self.model_state = self.model_state.replace(batch_stats=batch_stats_update["batch_stats"])
+        action, log_probs = self.sampling_strategy(
+            logits, subkey=subkey, calculate_log_probs=True
+        )
+        return action, log_probs, batch_stats_update["batch_stats"]
 
     def compute_action(self, observables, previous_actions):
         self.iteration += 1
         subkey = jax.random.fold_in(self.rng_key_sampling_strategy, self.iteration)
-
         try:
-            logits, self.carry = self.apply_fn(
-                {"params": self.model_state.params},
+            (logits, self.carry), batch_stats_update = self.model_state.apply_fn(
+                {
+                    "params": self.model_state.params,
+                    "batch_stats": self.model_state.batch_stats,
+                },
                 np.array(observables),
                 np.array(previous_actions),
                 self.carry,
+                not self.deployment_mode,
+                mutable = ["batch_stats"],
             )
         except AttributeError:
-            logits, self.carry = self.apply_fn(
-                {"params": self.model_state["params"]},
+            (logits, self.carry), batch_stats_update = self.model_state.apply_fn(
+                {
+                    "params": self.model_state["params"],
+                    "batch_stats": self.model_state["batch_stats"],
+                },
                 np.array(observables),
                 np.array(previous_actions),
                 self.carry,
+                not self.deployment_mode,
+                mutable = ["batch_stats"],
             )
         self.carry = np.array(
             [
@@ -250,9 +282,12 @@ class ContinuousActionModel(Network, ABC):
                 self.carry[1][np.shape(observables)[0] - 1],
             ]
         )
+        self.model_state = self.model_state.replace(batch_stats=batch_stats_update["batch_stats"])
         self.carry = tuple(np.expand_dims(self.carry, axis=1))
         logits = logits.squeeze()
-        logger.info(f"covariance {np.mean(np.exp(logits[self.action_dimension:]) * (self.sampling_strategy.action_limits[:,1] - self.sampling_strategy.action_limits[:,0]))}")
+        logger.info(
+            f"covariance {np.mean(np.exp(logits[self.action_dimension:]) * (self.sampling_strategy.action_limits[:,1] - self.sampling_strategy.action_limits[:,0]))}"
+        )
         action, _ = self.sampling_strategy(
             logits[np.newaxis, :], subkey=subkey, calculate_log_probs=False
         )
@@ -277,10 +312,13 @@ class ContinuousActionModel(Network, ABC):
         opt_step = self.model_state.step
         epoch = self.epoch_count
         carry = self.carry
+        batch_stats = self.model_state.batch_stats
         os.makedirs(directory, exist_ok=True)
 
         with open(directory + "/" + filename + ".pkl", "wb") as f:
-            pickle.dump((model_params, opt_state, opt_step, epoch, carry), f)
+            pickle.dump(
+                (model_params, opt_state, opt_step, epoch, carry, batch_stats), f
+            )
 
     def restore_model_state(self, filename: str = "model", directory: str = "Models"):
         """
@@ -299,10 +337,15 @@ class ContinuousActionModel(Network, ABC):
         """
 
         with open(directory + "/" + filename + ".pkl", "rb") as f:
-            model_params, opt_state, opt_step, epoch, carry = pickle.load(f)
+            model_params, opt_state, opt_step, epoch, carry, batch_stats = pickle.load(
+                f
+            )
 
         self.model_state = self.model_state.replace(
-            params=model_params, opt_state=opt_state, step=opt_step
+            params=model_params,
+            opt_state=opt_state,
+            step=opt_step,
+            batch_stats=batch_stats,
         )
         logger.info(self.model_state.params.keys())
         self.carry = carry
