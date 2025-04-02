@@ -136,6 +136,9 @@ class GlobalContinuousTrainer(Trainer):
             try:
                 for episode in range(n_episodes):
                     self.engine.integrate(episode_length, force_fn)
+                    with self.lock:
+                        for agent in self.agents.values():
+                            agent.remove_old_data()
                     if episode == 0 and not self.deployment_mode:
                         self.learning_thread.start()
                     if not self.interaction_model_queue.empty():

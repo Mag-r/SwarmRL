@@ -135,7 +135,7 @@ def defineRLAgent(
     action_limits = jnp.array([[0,70],[0,70],[0,50], [0,50], [0.01, 3], [-0.8, 0.8], [-0.5, 0.5]])
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
 
-    value_function = srl.value_functions.TDReturnsSAC(gamma=0.9, standardize=True)
+    value_function = srl.value_functions.TDReturnsSAC(gamma=0.8, standardize=True)
     actor_network = srl.networks.ContinuousActionModel(
         flax_model=actor,
         optimizer=optimizer,
