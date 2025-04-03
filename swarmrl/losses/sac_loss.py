@@ -326,11 +326,21 @@ class SoftActorCriticGradientLoss(Loss):
             next_feature_data = next_feature_data.reshape(
                 ((iterations_next) * n_particles, *feature_dimension)
             )
-            # if jnp.shape(reward_data)[0] != iterations_next:
-                # iterations -= 1
-                # iterations_next -= 1
-                # next_feature_data = next_feature_data[:iterations_next]
-                # feature_data = feature_data[:iterations]
+            if jnp.shape(reward_data)[0] != iterations_next:
+                iterations -= 1
+                iterations_next -= 1
+                next_feature_data = next_feature_data[:iterations_next]
+                feature_data = feature_data[:iterations]
+            logger.info(f"feature_data = {feature_data.shape}")
+            logger.info(f"next_feature_data = {next_feature_data.shape}")
+            logger.info(f"reward_data = {reward_data.shape}")
+            logger.info(f"next_feature_data = {next_feature_data.shape}")
+            logger.info(f"iterations = {iterations}, {iterations_next}")
+            assert (
+                (jnp.shape(feature_data)[0] == iterations_next)
+                and (jnp.shape(next_feature_data)[0] == iterations_next)
+                and (jnp.shape(reward_data)[0] == iterations_next)
+            ), f"feature_data = {feature_data.shape}, next_feature_data = {next_feature_data.shape}"
             next_carry_data = jnp.array(episode_data.next_carry).copy()
             next_carry_data = jnp.squeeze(next_carry_data)[:iterations_next]
             next_carry_data = tuple(jnp.swapaxes(next_carry_data, 0, 1))
@@ -343,13 +353,7 @@ class SoftActorCriticGradientLoss(Loss):
             ].copy()
             # reward_data = self.normalize_rewards(reward_data)
             self.n_time_steps = jnp.shape(feature_data)[0]
-            logger.info(f"feature_data = {feature_data.shape}")
-            logger.info(f"next_feature_data = {next_feature_data.shape}")
-            logger.info(f"reward_data = {reward_data.shape}")
-            logger.info(f"action_sequence = {action_sequence.shape}")
-            logger.info(f"next_feature_data = {next_feature_data.shape}")
-            logger.info(f"iterations = {iterations}, {iterations_next}")
-            
+
         if jnp.isnan(reward_data).any():
             raise ValueError("Nan in reward data")
         first_actor_loss, first_critic_loss, first_temperature_loss, _ = (

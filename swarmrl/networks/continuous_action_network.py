@@ -70,7 +70,6 @@ class ContinuousActionModel(Network, ABC):
         """
         if rng_key is None:
             rng_key = onp.random.randint(0, 1027465782564)
-        self.rng_key_sampling_strategy = jax.random.PRNGKey(rng_key)
         self.sampling_strategy = sampling_strategy
         self.model = flax_model
 
@@ -84,9 +83,11 @@ class ContinuousActionModel(Network, ABC):
         self.carry = None
         # initialize the model state
         init_rng = jax.random.PRNGKey(rng_key)
-        _, subkey = jax.random.split(init_rng)
+        self.rng_key_sampling_strategy, params_init_rng, self.dropout_key = (
+            jax.random.split(init_rng, num=3)
+        )
         self.optimizer = optimizer
-        self.model_state = self._create_train_state(subkey)
+        self.model_state = self._create_train_state(params_init_rng)
         self.deployment_mode = deployment_mode
         self.iteration = 0
         if not deployment_mode:
@@ -120,7 +121,6 @@ class ContinuousActionModel(Network, ABC):
             np.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
-            
         )
         params = variables["params"]
         batch_stats = variables["batch_stats"]
@@ -167,8 +167,7 @@ class ContinuousActionModel(Network, ABC):
         _, subkey = jax.random.split(init_rng)
         self.model_state = self._create_train_state(subkey)
 
-    
-    def update_model(self, grads, updated_batch_stats = None):
+    def update_model(self, grads, updated_batch_stats=None):
         """
         Train the model.
 
@@ -222,7 +221,10 @@ class ContinuousActionModel(Network, ABC):
                 log_probs (i.e. the output of the network put through a softmax).
         """
         self.iteration += 1
-        subkey = jax.random.fold_in(self.rng_key_sampling_strategy, self.iteration)
+        sampling_subkey = jax.random.fold_in(
+            self.rng_key_sampling_strategy, self.iteration
+        )
+        dropout_subkey = jax.random.fold_in(self.dropout_key, self.iteration)
         try:
             (logits, _), batch_stats_update = self.model_state.apply_fn(
                 {"params": params, "batch_stats": self.model_state.batch_stats},
@@ -231,6 +233,7 @@ class ContinuousActionModel(Network, ABC):
                 carry,
                 not self.deployment_mode,
                 mutable=["batch_stats"],
+                rngs={"dropout": dropout_subkey},
             )
         except AttributeError:  # We need this for loaded models.
             (logits, _), batch_stats_update = self.model_state.apply_fn(
@@ -242,16 +245,20 @@ class ContinuousActionModel(Network, ABC):
                 np.array(previous_actions),
                 carry,
                 mutable=["batch_stats"],
+                rngs={"dropout": dropout_subkey},
             )
         # self.model_state = self.model_state.replace(batch_stats=batch_stats_update["batch_stats"])
         action, log_probs = self.sampling_strategy(
-            logits, subkey=subkey, calculate_log_probs=True
+            logits, subkey=sampling_subkey, calculate_log_probs=True
         )
         return action, log_probs, batch_stats_update["batch_stats"]
 
     def compute_action(self, observables, previous_actions):
         self.iteration += 1
-        subkey = jax.random.fold_in(self.rng_key_sampling_strategy, self.iteration)
+        sampling_subkey = jax.random.fold_in(
+            self.rng_key_sampling_strategy, self.iteration
+        )
+        dropout_subkey = jax.random.fold_in(self.dropout_key, self.iteration)
         try:
             (logits, self.carry), batch_stats_update = self.model_state.apply_fn(
                 {
@@ -262,7 +269,8 @@ class ContinuousActionModel(Network, ABC):
                 np.array(previous_actions),
                 self.carry,
                 not self.deployment_mode,
-                mutable = ["batch_stats"],
+                mutable=["batch_stats"],
+                rngs={"dropout": dropout_subkey},
             )
         except AttributeError:
             (logits, self.carry), batch_stats_update = self.model_state.apply_fn(
@@ -274,7 +282,8 @@ class ContinuousActionModel(Network, ABC):
                 np.array(previous_actions),
                 self.carry,
                 not self.deployment_mode,
-                mutable = ["batch_stats"],
+                mutable=["batch_stats"],
+                rngs={"dropout": dropout_subkey},
             )
         self.carry = np.array(
             [
@@ -282,14 +291,16 @@ class ContinuousActionModel(Network, ABC):
                 self.carry[1][np.shape(observables)[0] - 1],
             ]
         )
-        self.model_state = self.model_state.replace(batch_stats=batch_stats_update["batch_stats"])
+        self.model_state = self.model_state.replace(
+            batch_stats=batch_stats_update["batch_stats"]
+        )
         self.carry = tuple(np.expand_dims(self.carry, axis=1))
         logits = logits.squeeze()
         logger.info(
             f"covariance {np.mean(np.exp(logits[self.action_dimension:]) * (self.sampling_strategy.action_limits[:,1] - self.sampling_strategy.action_limits[:,0]))}"
         )
         action, _ = self.sampling_strategy(
-            logits[np.newaxis, :], subkey=subkey, calculate_log_probs=False
+            logits[np.newaxis, :], subkey=sampling_subkey, calculate_log_probs=False
         )
         # action = self.exploration_policy(action)
         return action

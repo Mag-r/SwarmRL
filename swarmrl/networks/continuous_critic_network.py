@@ -82,10 +82,11 @@ class ContinuousCriticModel(Network, ABC):
         self.sequence_length = self.input_shape[1]
 
         init_rng = jax.random.PRNGKey(rng_key)
-        _, subkey = jax.random.split(init_rng)
+        params_init_rng, self.dropout_key = jax.random.split(init_rng)
         self.optimizer = optimizer
-        self.critic_state, self.target_state = self._create_train_state(subkey)
+        self.critic_state, self.target_state = self._create_train_state(params_init_rng)
         self.deployment_mode = deployment_mode
+        self.iteration_count = 0
         if not deployment_mode:
             self.epoch_count = 0
 
@@ -211,6 +212,8 @@ class ContinuousCriticModel(Network, ABC):
         previous_actions: np.ndarray,
         carry: np.ndarray,
     ):
+        dropout_subkey = jax.random.fold_in(self.dropout_key, self.iteration_count)
+        self.iteration_count += 1
         try:
             (first_q_values, second_q_values), batch_stats_updates = (
                 self.critic_state.apply_fn(
@@ -221,6 +224,7 @@ class ContinuousCriticModel(Network, ABC):
                     carry,
                     not self.deployment_mode,
                     mutable=["batch_stats"],
+                    rngs={"dropout": dropout_subkey},
                 )
             )
         except AttributeError:
@@ -236,6 +240,7 @@ class ContinuousCriticModel(Network, ABC):
                     carry,
                     not self.deployment_mode,
                     mutable=["batch_stats"],
+                    rngs={"dropout": dropout_subkey},
                 )
             )
         return first_q_values, second_q_values, batch_stats_updates
@@ -247,7 +252,8 @@ class ContinuousCriticModel(Network, ABC):
         previous_actions: np.ndarray,
         carry: np.ndarray,
     ):
-
+        dropout_subkey = jax.random.fold_in(self.dropout_key, self.iteration_count)
+        self.iteration_count += 1
         try:
             (first_q_values, second_q_values), batch_stats_update = (
                 self.target_state.apply_fn(
@@ -261,6 +267,7 @@ class ContinuousCriticModel(Network, ABC):
                     carry,
                     not self.deployment_mode,
                     mutable=["batch_stats"],
+                    rngs={"dropout": dropout_subkey},
                 )
             )
         except AttributeError:
@@ -276,6 +283,7 @@ class ContinuousCriticModel(Network, ABC):
                     carry,
                     not self.deployment_mode,
                     mutable=["batch_stats"],
+                    rngs={"dropout": dropout_subkey},
                 )
             )
         # self.target_state = self.target_state.replace(

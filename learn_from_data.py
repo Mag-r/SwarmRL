@@ -63,6 +63,7 @@ class ActorNet(nn.Module):
             print("Action Net: new carry initialized")
         carry, x = self.lstm(carry, x)
         x = x.reshape((batch_size, -1))
+        x = nn.Dropout(0.1)(x, deterministic=not train)
         x = self.bn(x, use_running_average=not train)
         actor = nn.Dense(features=64, name="Actor_1")(x)
         actor = nn.relu(actor)
@@ -106,7 +107,7 @@ class CriticNet(nn.Module):
         x = self.bn(x, use_running_average=not train)
 
         x = jnp.concatenate([x, action], axis=-1)
-
+        x = nn.Dropout(0.1)(x, deterministic=not train)
         q_1 = nn.Dense(features=64)(x)
         q_2 = nn.Dense(features=64)(x)
         q_1 = nn.relu(q_1)
@@ -193,7 +194,7 @@ protocol = srl.agents.MPIActorCriticAgent(
     task=task,
     observable=obs,
     loss=loss,
-    max_samples_in_trajectory=1000,
+    max_samples_in_trajectory=100,
 )
 # Initialize the simulation system
 
