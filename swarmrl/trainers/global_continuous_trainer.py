@@ -145,12 +145,10 @@ class GlobalContinuousTrainer(Trainer):
                         force_fn, current_reward, killed = (
                             self.interaction_model_queue.get()
                         )
-                        with self.lock: #clear the queue, to not use old models
+                        with self.lock:  # clear the queue, to not use old models
                             while not self.interaction_model_queue.empty():
                                 self.interaction_model_queue.get()
-                        logger.info(
-                            f"obtained new interaction model"
-                        )
+                        logger.info(f"obtained new interaction model")
 
                         if killed:
                             print(
@@ -172,16 +170,20 @@ class GlobalContinuousTrainer(Trainer):
                         )
                         if episode % 10 == 0:
                             # Save the agents every 10 episodes.
-                            logger.info("Trying to seperate the rafts and save the agents.")
+                            logger.info(
+                                "Trying to seperate the rafts and save the agents."
+                            )
                             self.engine.seperate_rafts()
                             with self.lock:
                                 for agent in self.agents.values():
-                                    agent.save_trajectory(identifier = f"{agent.task.__class__.__name__}_episode_{int(episode/10.0)}")
-                                    agent.save_agent(identifier = agent.task.__class__.__name__)
+                                    agent.save_trajectory(
+                                        identifier=f"{agent.task.__class__.__name__}_episode_{int(episode/10.0)}"
+                                    )
+                                    agent.save_agent(
+                                        identifier=agent.task.__class__.__name__
+                                    )
                     else:
-                        logger.info(
-                            "Sampling is faster than learning."
-                        )
+                        logger.info("Sampling is faster than learning.")
             finally:
                 self.engine.finalize()
                 self.sampling_finished = True

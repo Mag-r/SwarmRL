@@ -249,12 +249,14 @@ class MPIActorCriticAgent(Agent):
             self.trajectory.next_features = [
                 self.trajectory.next_features[i]
                 for i in selected_indices
+                if i < len(self.trajectory.next_features)
             ]
             self.trajectory.features = self.trajectory.features[:, selected_indices]
             self.trajectory.carry = [self.trajectory.carry[i] for i in selected_indices]
             self.trajectory.next_carry = [
                 self.trajectory.next_carry[i]
                 for i in selected_indices
+                if i < len(self.trajectory.next_carry)
             ]
             self.trajectory.actions = self.trajectory.actions[selected_indices]
             self.trajectory.action_sequence = [
@@ -263,7 +265,7 @@ class MPIActorCriticAgent(Agent):
             self.trajectory.rewards = [
                 self.trajectory.rewards[i] for i in selected_indices
             ]
-        logger.info(f"AFter removing:: shape of all features: {np.shape(self.trajectory.features)}, shape of all actions: {np.shape(self.trajectory.actions)}, shape of all rewards: {np.shape(self.trajectory.rewards)}, shape of feature sequence{np.shape(self.trajectory.feature_sequence)}, shape of action sequence{np.shape(self.trajectory.action_sequence)}, shape of next features{np.shape(self.trajectory.next_features)}")
+            logger.info(f"AFter removing:: shape of all features: {np.shape(self.trajectory.features)}, shape of all actions: {np.shape(self.trajectory.actions)}, shape of all rewards: {np.shape(self.trajectory.rewards)}, shape of feature sequence{np.shape(self.trajectory.feature_sequence)}, shape of action sequence{np.shape(self.trajectory.action_sequence)}, shape of next features{np.shape(self.trajectory.next_features)}")
 
 
     def initialize_network(self):

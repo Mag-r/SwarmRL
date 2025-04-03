@@ -10,7 +10,6 @@ from swarmrl.losses.loss import Loss
 from swarmrl.networks.network import Network
 from swarmrl.value_functions.td_return_sac import TDReturnsSAC
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -97,9 +96,10 @@ class SoftActorCriticGradientLoss(Loss):
             log_temp,
         )
 
-        (critic_loss, (critic_loss_per_sample, updated_batch_stats_critic)), critic_grad = jax.value_and_grad(
-            self._calculate_critic_loss, has_aux=True
-        )(
+        (
+            critic_loss,
+            (critic_loss_per_sample, updated_batch_stats_critic),
+        ), critic_grad = jax.value_and_grad(self._calculate_critic_loss, has_aux=True)(
             critic_network_params,
             critic_network,
             feature_data,
@@ -137,11 +137,15 @@ class SoftActorCriticGradientLoss(Loss):
 
         assert actor_grad["temperature"] == 0
 
-        critic_network.update_model(critic_grad, updated_batch_stats=updated_batch_stats_critic)
-        
-        actor_network.update_model(actor_grad, updated_batch_stats=updated_batch_stats_actor)
+        critic_network.update_model(
+            critic_grad, updated_batch_stats=updated_batch_stats_critic
+        )
+
+        actor_network.update_model(
+            actor_grad, updated_batch_stats=updated_batch_stats_actor
+        )
         actor_network.update_model(temperature_grad)
-        
+
         critic_network.polyak_averaging(self.polyak_averaging_tau)
         return actor_loss, critic_loss, temperature_loss, error_predicted_reward
 
@@ -168,8 +172,10 @@ class SoftActorCriticGradientLoss(Loss):
         action_sequence,
         log_temp,
     ):
-        actions, log_probs, updated_batch_stats_actor = actor_network.compute_action_training(
-            actor_network_params, feature_data, action_sequence[:, :-1, :], carry
+        actions, log_probs, updated_batch_stats_actor = (
+            actor_network.compute_action_training(
+                actor_network_params, feature_data, action_sequence[:, :-1, :], carry
+            )
         )
         first_q_value, second_q_value, _ = critic_network.compute_q_values_critic(
             critic_network_params,
@@ -180,7 +186,9 @@ class SoftActorCriticGradientLoss(Loss):
         )
         log_probs = jnp.expand_dims(log_probs, axis=-1)
         assert jnp.shape(first_q_value) == jnp.shape(log_probs)
-        actor_loss = jnp.exp(log_temp) * log_probs - jnp.minimum(first_q_value, second_q_value)
+        actor_loss = jnp.exp(log_temp) * log_probs - jnp.minimum(
+            first_q_value, second_q_value
+        )
         assert jnp.shape(actor_loss) == jnp.shape(first_q_value)
         return jnp.mean(actor_loss), (log_probs, actor_loss, updated_batch_stats_actor)
 
@@ -211,12 +219,14 @@ class SoftActorCriticGradientLoss(Loss):
         """
         logger.debug(f"{jnp.shape(feature_data)=}")
         logger.debug(f"feature data = {feature_data}")
-        first_q_value, second_q_value, updated_batch_stats_critic = critic_network.compute_q_values_critic(
-            critic_network_params,
-            feature_data,
-            actions,
-            action_sequence[:, :-1, :],
-            carry,
+        first_q_value, second_q_value, updated_batch_stats_critic = (
+            critic_network.compute_q_values_critic(
+                critic_network_params,
+                feature_data,
+                actions,
+                action_sequence[:, :-1, :],
+                carry,
+            )
         )
 
         critic_loss = (first_q_value - desired_q_value) ** 2 + (
@@ -252,11 +262,13 @@ class SoftActorCriticGradientLoss(Loss):
             next_carry,
         )
         next_log_probs = jnp.expand_dims(next_log_probs, axis=-1)
-        first_q_value, second_q_value, updated_batch_stats_target = critic_network.compute_q_values_target(
-            next_feature_data,
-            next_action,
-            action_sequence[:, 1:, :],
-            next_carry,
+        first_q_value, second_q_value, updated_batch_stats_target = (
+            critic_network.compute_q_values_target(
+                next_feature_data,
+                next_action,
+                action_sequence[:, 1:, :],
+                next_carry,
+            )
         )
         next_q_value = jnp.minimum(first_q_value, second_q_value)
         desired_q_value = self.value_function(
@@ -305,18 +317,20 @@ class SoftActorCriticGradientLoss(Loss):
             next_feature_data = jnp.array(episode_data.next_features).copy()
             iterations, n_particles, *feature_dimension = feature_data.shape
             iterations_next, *_ = next_feature_data.shape
-            reward_data = jnp.array(episode_data.rewards)[:iterations_next, jnp.newaxis].copy()
+            reward_data = jnp.array(episode_data.rewards)[
+                :iterations_next, jnp.newaxis
+            ].copy()
             feature_data = feature_data.reshape(
                 (iterations * n_particles, *feature_dimension)
             )[:iterations_next]
             next_feature_data = next_feature_data.reshape(
                 ((iterations_next) * n_particles, *feature_dimension)
             )
-            if jnp.shape(reward_data)[0] != iterations_next:
-                iterations -= 1
-                iterations_next -= 1
-                next_feature_data = next_feature_data[:iterations_next]
-                feature_data = feature_data[:iterations]
+            # if jnp.shape(reward_data)[0] != iterations_next:
+                # iterations -= 1
+                # iterations_next -= 1
+                # next_feature_data = next_feature_data[:iterations_next]
+                # feature_data = feature_data[:iterations]
             next_carry_data = jnp.array(episode_data.next_carry).copy()
             next_carry_data = jnp.squeeze(next_carry_data)[:iterations_next]
             next_carry_data = tuple(jnp.swapaxes(next_carry_data, 0, 1))
@@ -324,12 +338,21 @@ class SoftActorCriticGradientLoss(Loss):
             carry = jnp.squeeze(carry)[:iterations_next]
             carry = tuple(jnp.swapaxes(carry, 0, 1))
             actions = jnp.array(episode_data.actions)[:iterations_next].copy()
-            action_sequence = jnp.array(episode_data.action_sequence)[:iterations_next].copy()
+            action_sequence = jnp.array(episode_data.action_sequence)[
+                :iterations_next
+            ].copy()
             # reward_data = self.normalize_rewards(reward_data)
             self.n_time_steps = jnp.shape(feature_data)[0]
-            if jnp.isnan(reward_data).any():
-                raise ValueError("Nan in reward data")
-                    first_actor_loss, first_critic_loss, first_temperature_loss, _ = (
+            logger.info(f"feature_data = {feature_data.shape}")
+            logger.info(f"next_feature_data = {next_feature_data.shape}")
+            logger.info(f"reward_data = {reward_data.shape}")
+            logger.info(f"action_sequence = {action_sequence.shape}")
+            logger.info(f"next_feature_data = {next_feature_data.shape}")
+            logger.info(f"iterations = {iterations}, {iterations_next}")
+            
+        if jnp.isnan(reward_data).any():
+            raise ValueError("Nan in reward data")
+        first_actor_loss, first_critic_loss, first_temperature_loss, _ = (
             self._calculate_loss(
                 critic_network_params=critic_network.critic_state.params,
                 critic_network=critic_network,
