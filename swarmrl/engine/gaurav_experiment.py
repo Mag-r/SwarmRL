@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6344
+    labview_port = 6340
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  # check with Gaurav
@@ -33,6 +33,7 @@ class GauravExperiment(Engine):
         self.message_to_publish = " "  # Initial message
         self.colloids = None
         self.establish_connection()
+        self.lock = threading.Lock()
 
     def establish_connection(self):
         """Establish TCP connections with LabVIEW"""
@@ -93,7 +94,8 @@ class GauravExperiment(Engine):
 
     def update_message(self, new_message: str):
         """Update the message to be published."""
-        self.message_to_publish = new_message
+        with self.lock:
+            self.message_to_publish = new_message
 
     def _publish_loop(self):
         """Continuously send updated messages at the given update rate."""
@@ -127,7 +129,8 @@ class GauravExperiment(Engine):
         """Send an action to LabVIEW."""
         # Convert action to string message and send
         action = self.clip_actions(action)
-        action_message = f"M_0.0_{action.magnitude[0]}_{action.magnitude[1]}_{action.frequency[0]}_{action.frequency[1]}_{action.keep_magnetic_field}"
+        action_message = f"M_0.0_{action.magnitude[0]:.03f}_{action.magnitude[1]:.03f}_{action.frequency[0]:.03f}_{action.frequency[1]:.03f}_{action.keep_magnetic_field:.03f}_{action.gradient[0]:.03f}_{action.gradient[1]:.03f}"
+        
         self.update_message(action_message)
 
     def clip_actions(
@@ -139,11 +142,12 @@ class GauravExperiment(Engine):
         return action
 
     def seperate_rafts(self):
-        seperation_action = MPIAction(
-            magnitude=[100, 100], frequency=[25, 26], keep_magnetic_field=10
-        )
-        self.send_action(seperation_action)
-        time.sleep(10)
+        # seperation_action = MPIAction(
+        #     magnitude=[100, 100], frequency=[25, 26], keep_magnetic_field=10
+        # )
+        # self.send_action(seperation_action)
+        # time.sleep(10)
+        pass
 
     def integrate(self, n_slices: int, force_model: GlobalForceFunction):
         """Perform a real-experiment equivalent of an integration step."""
@@ -151,7 +155,7 @@ class GauravExperiment(Engine):
         for _ in range(n_slices):
             action = force_model.calc_action(None)
             action = MPIAction(
-                magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=action[4]
+                magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=action[4], gradient=action[5:7]
             )
             self.send_action(action)
             logger.info(f"Action sent: {action}")

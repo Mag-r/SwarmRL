@@ -123,10 +123,13 @@ class MPIActorCriticAgent(Agent):
             self.intrinsic_reward.update(self.trajectory)
 
         # Reset the trajectory storage.
-        with self.lock:
-            self.remove_old_data(
-                self.trajectory.features.shape[1] - self.max_samples_in_trajectory
-            )
+        # with self.lock:
+        #     self.remove_old_data(
+        #         self.trajectory.feature_sequence.shape[0] - self.max_samples_in_trajectory
+        #     )
+
+        # self.trajectory = GlobalTrajectoryInformation()
+
         return rewards, killed
 
     def reset_agent(self, colloids: typing.List[Colloid]):
@@ -209,14 +212,18 @@ class MPIActorCriticAgent(Agent):
         self.trajectory.next_carry = trajectory_data["next_carry"]
         self.trajectory.action_sequence = trajectory_data["action_sequence"]
         self.trajectory.killed = trajectory_data["killed"]
+        logger.info(f"shape of all features: {np.shape(self.trajectory.features)}, shape of all actions: {np.shape(self.trajectory.actions)}, shape of all rewards: {np.shape(self.trajectory.rewards)}")
 
-    def remove_old_data(self, remove: int):
+    def remove_old_data(self, remove: int = -1):
         """Remove old data from the trajectory. The last 10 are always kept.
 
         Args:
             remove (int): Number of elements to remove.
         """
-        if remove > 0:
+        logger.info(f"shape of all features: {np.shape(self.trajectory.features)}, shape of all actions: {np.shape(self.trajectory.actions)}, shape of all rewards: {np.shape(self.trajectory.rewards)}, shape of feature sequence{np.shape(self.trajectory.feature_sequence)}, shape of action sequence{np.shape(self.trajectory.action_sequence)}, shape of next features{np.shape(self.trajectory.next_features)}")
+        if remove == -1:
+            remove = len(self.trajectory.feature_sequence) - self.max_samples_in_trajectory
+        if remove > 0 and self.loss.error_predicted_reward is not None:
             indices = np.arange(len(self.loss.error_predicted_reward))
             probabilities = jnp.array(self.loss.error_predicted_reward)
             probabilities = 1 / probabilities
@@ -230,9 +237,8 @@ class MPIActorCriticAgent(Agent):
             selected_indices = np.array(
                 jax.device_get(selected_indices), dtype=int
             )  # Ensure selected_indices is a NumPy array
-
             # Get the list of all indices without the selected ones
-            all_indices = set(indices)
+            all_indices = set(np.arange(len(self.trajectory.feature_sequence)))
             selected_indices = set(selected_indices)
             selected_indices = np.array(list(all_indices - selected_indices), dtype=int)
 
@@ -243,14 +249,12 @@ class MPIActorCriticAgent(Agent):
             self.trajectory.next_features = [
                 self.trajectory.next_features[i]
                 for i in selected_indices
-                if i < len(self.trajectory.next_features) - 1
             ]
             self.trajectory.features = self.trajectory.features[:, selected_indices]
             self.trajectory.carry = [self.trajectory.carry[i] for i in selected_indices]
             self.trajectory.next_carry = [
                 self.trajectory.next_carry[i]
                 for i in selected_indices
-                if i < len(self.trajectory.next_carry) - 1
             ]
             self.trajectory.actions = self.trajectory.actions[selected_indices]
             self.trajectory.action_sequence = [
@@ -259,6 +263,8 @@ class MPIActorCriticAgent(Agent):
             self.trajectory.rewards = [
                 self.trajectory.rewards[i] for i in selected_indices
             ]
+        logger.info(f"AFter removing:: shape of all features: {np.shape(self.trajectory.features)}, shape of all actions: {np.shape(self.trajectory.actions)}, shape of all rewards: {np.shape(self.trajectory.rewards)}, shape of feature sequence{np.shape(self.trajectory.feature_sequence)}, shape of action sequence{np.shape(self.trajectory.action_sequence)}, shape of next features{np.shape(self.trajectory.next_features)}")
+
 
     def initialize_network(self):
         """

@@ -8,7 +8,7 @@ import logging
 import os
 
 logger = logging.getLogger(__name__)
-action_dimension = 5
+action_dimension = 7
 
 
 class ActorNet(nn.Module):
@@ -28,17 +28,18 @@ class ActorNet(nn.Module):
         )
         self.lstm = self.ScanLSTM(features=64)
         temperature = self.param(
-            "temperature", lambda key, shape: jnp.full(shape, jnp.log(0.1)), (1,)
+            "temperature", lambda key, shape: jnp.full(shape, 0.0), (1,)
         )
 
     @nn.compact
     def __call__(self, x, previous_actions, carry=None):
         batch_size, sequence_length = x.shape[0], x.shape[1]
         x = x.reshape((batch_size, sequence_length, -1))
-        x = (x - jnp.mean(x, keepdims=True)) / (jnp.std(
-            x, keepdims=True
-        ) + 1e-6)
-        x = jnp.concatenate([x, previous_actions], axis=-1)
+        mean = jnp.mean(x, keepdims=True, axis=-1)
+        std = jnp.std(x, keepdims=True, axis=-1)
+        x = (x - mean) / (std + 1e-6)
+        x = jnp.concatenate([x, mean, std], axis = -1)
+        # x = jnp.concatenate([x, previous_actions], axis=-1)
         # Initialize carry if it's not provided
         if carry is None:
             carry = self.lstm.initialize_carry(
@@ -75,10 +76,11 @@ class CriticNet(nn.Module):
         batch_size, sequence_length = x.shape[0], x.shape[1]
 
         x = x.reshape((batch_size, sequence_length, -1))
-        x = (x - jnp.mean(x, keepdims=True)) / (jnp.std(
-            x, keepdims=True
-        ) + 1e-6)
-        x = jnp.concatenate([x, previous_actions], axis=-1)
+        mean = jnp.mean(x, keepdims=True, axis=-1)
+        std = jnp.std(x, keepdims=True, axis=-1)
+        x = (x - mean) / (std + 1e-6)
+        x = jnp.concatenate([x, mean, std], axis = -1)
+        # x = jnp.concatenate([x, previous_actions], axis=-1)
         # Initialize carry if it's not provided
         if carry is None:
             carry = self.lstm.initialize_carry(
@@ -130,7 +132,7 @@ def defineRLAgent(
     
 
     # Define a sampling_strategy
-    action_limits = jnp.array([[0,100],[0,100],[0,50], [0,50], [0.01, 3]])
+    action_limits = jnp.array([[0,70],[0,70],[0,50], [0,50], [0.01, 3], [-0.8, 0.8], [-0.5, 0.5]])
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
 
     value_function = srl.value_functions.TDReturnsSAC(gamma=0.8, standardize=True)

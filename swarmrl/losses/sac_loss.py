@@ -305,12 +305,18 @@ class SoftActorCriticGradientLoss(Loss):
             next_feature_data = jnp.array(episode_data.next_features).copy()
             iterations, n_particles, *feature_dimension = feature_data.shape
             iterations_next, *_ = next_feature_data.shape
+            reward_data = jnp.array(episode_data.rewards)[:iterations_next, jnp.newaxis].copy()
             feature_data = feature_data.reshape(
                 (iterations * n_particles, *feature_dimension)
             )[:iterations_next]
             next_feature_data = next_feature_data.reshape(
                 ((iterations_next) * n_particles, *feature_dimension)
             )
+            if jnp.shape(reward_data)[0] != iterations_next:
+                iterations -= 1
+                iterations_next -= 1
+                next_feature_data = next_feature_data[:iterations_next]
+                feature_data = feature_data[:iterations]
             next_carry_data = jnp.array(episode_data.next_carry).copy()
             next_carry_data = jnp.squeeze(next_carry_data)[:iterations_next]
             next_carry_data = tuple(jnp.swapaxes(next_carry_data, 0, 1))
@@ -319,12 +325,11 @@ class SoftActorCriticGradientLoss(Loss):
             carry = tuple(jnp.swapaxes(carry, 0, 1))
             actions = jnp.array(episode_data.actions)[:iterations_next].copy()
             action_sequence = jnp.array(episode_data.action_sequence)[:iterations_next].copy()
-            reward_data = jnp.array(episode_data.rewards)[:iterations_next, jnp.newaxis].copy()
             # reward_data = self.normalize_rewards(reward_data)
             self.n_time_steps = jnp.shape(feature_data)[0]
             if jnp.isnan(reward_data).any():
                 raise ValueError("Nan in reward data")
-        first_actor_loss, first_critic_loss, first_temperature_loss, _ = (
+                    first_actor_loss, first_critic_loss, first_temperature_loss, _ = (
             self._calculate_loss(
                 critic_network_params=critic_network.critic_state.params,
                 critic_network=critic_network,

@@ -14,7 +14,7 @@ from swarmrl.engine.gaurav_sim import GauravSim, GauravSimParams
 from swarmrl.trainers.global_continuous_trainer import (
     GlobalContinuousTrainer as Trainer,
 )
-from swarmrl.tasks.ball_movement import ExperimentBallMovingTask
+from swarmrl.tasks.ball_movement_task import ExperimentBallMovingTask
 from swarmrl.engine.gaurav_experiment import GauravExperiment
 from threading import Lock
 
@@ -54,7 +54,7 @@ sequence_length = 3
 resolution = 253
 
 number_particles = 7
-learning_rate = 1e-3
+learning_rate = 3e-3
 
 obs = BaslerCameraObservable(
     [resolution, resolution], Autoencoder(), model_path="Models/autoencoder_3_27.pkl"
@@ -97,7 +97,8 @@ protocol = setupNetwork.defineRLAgent(
     obs, task, learning_rate=learning_rate, sequence_length=sequence_length, lock=lock
 )
 
-# protocol.restore_agent(identifier=task.__class__.__name__)
-rl_trainer = Trainer([protocol], lock=lock)
+protocol.restore_agent(identifier=task.__class__.__name__)
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_10")
+rl_trainer = Trainer([protocol], lock=lock, deployment_mode=False)
 print("start training", flush=True)
-reward = rl_trainer.perform_rl_training(experiment, 100, 10)
+reward = rl_trainer.perform_rl_training(experiment, 1000, 10)
