@@ -121,6 +121,7 @@ class ContinuousActionModel(Network, ABC):
             np.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
+            train = False,
         )
         params = variables["params"]
         batch_stats = variables["batch_stats"]
@@ -167,6 +168,23 @@ class ContinuousActionModel(Network, ABC):
         _, subkey = jax.random.split(init_rng)
         self.model_state = self._create_train_state(subkey)
 
+    def set_temperature(self, exp_temperature: float):
+        """
+        Set the exponential temperature of the model.
+
+        Parameters
+        ----------
+        temperature : float
+                Temperature of the model.
+        """
+        self.model_state = self.model_state.replace(
+            params={
+                **self.model_state.params,
+                "temperature": np.log(exp_temperature),
+            }
+        )
+        logger.info(f"Temperature set to {exp_temperature}")
+        
     def update_model(self, grads, updated_batch_stats=None):
         """
         Train the model.
@@ -231,7 +249,7 @@ class ContinuousActionModel(Network, ABC):
                 np.array(observables),
                 np.array(previous_actions),
                 carry,
-                not self.deployment_mode,
+                train = not self.deployment_mode,
                 mutable=["batch_stats"],
                 rngs={"dropout": dropout_subkey},
             )
@@ -244,6 +262,7 @@ class ContinuousActionModel(Network, ABC):
                 np.array(observables),
                 np.array(previous_actions),
                 carry,
+                train = not self.deployment_mode,
                 mutable=["batch_stats"],
                 rngs={"dropout": dropout_subkey},
             )
@@ -260,7 +279,7 @@ class ContinuousActionModel(Network, ABC):
         )
         dropout_subkey = jax.random.fold_in(self.dropout_key, self.iteration)
         try:
-            (logits, self.carry), batch_stats_update = self.model_state.apply_fn(
+            logits, self.carry = self.model_state.apply_fn(
                 {
                     "params": self.model_state.params,
                     "batch_stats": self.model_state.batch_stats,
@@ -268,12 +287,11 @@ class ContinuousActionModel(Network, ABC):
                 np.array(observables),
                 np.array(previous_actions),
                 self.carry,
-                not self.deployment_mode,
-                mutable=["batch_stats"],
+                train = False,
                 rngs={"dropout": dropout_subkey},
             )
         except AttributeError:
-            (logits, self.carry), batch_stats_update = self.model_state.apply_fn(
+            logits, self.carry = self.model_state.apply_fn(
                 {
                     "params": self.model_state["params"],
                     "batch_stats": self.model_state["batch_stats"],
@@ -281,21 +299,20 @@ class ContinuousActionModel(Network, ABC):
                 np.array(observables),
                 np.array(previous_actions),
                 self.carry,
-                not self.deployment_mode,
-                mutable=["batch_stats"],
+                train = False,
                 rngs={"dropout": dropout_subkey},
             )
+
         self.carry = np.array(
             [
                 self.carry[0][np.shape(observables)[0] - 1],
                 self.carry[1][np.shape(observables)[0] - 1],
             ]
         )
-        self.model_state = self.model_state.replace(
-            batch_stats=batch_stats_update["batch_stats"]
-        )
+
         self.carry = tuple(np.expand_dims(self.carry, axis=1))
         logits = logits.squeeze()
+        
         logger.info(
             f"covariance {np.mean(np.exp(logits[self.action_dimension:]) * (self.sampling_strategy.action_limits[:,1] - self.sampling_strategy.action_limits[:,0]))}"
         )

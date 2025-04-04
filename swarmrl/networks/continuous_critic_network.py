@@ -118,6 +118,7 @@ class ContinuousCriticModel(Network, ABC):
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
             np.ones(list([self.input_shape[0], self.action_dimension])),
+            train = False
         )
         params = variables["params"]
         batch_stats = variables["batch_stats"]
@@ -128,6 +129,7 @@ class ContinuousCriticModel(Network, ABC):
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
             np.ones(list([self.input_shape[0], self.action_dimension])),
+            train = False,
         )
         print(model_summary)
 
@@ -152,6 +154,7 @@ class ContinuousCriticModel(Network, ABC):
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
             np.ones(list([self.input_shape[0], self.action_dimension])),
+            train = False,
         )
         params = variables["params"]
         batch_stats = variables["batch_stats"]
@@ -222,7 +225,7 @@ class ContinuousCriticModel(Network, ABC):
                     np.array(previous_actions),
                     np.array(actions),
                     carry,
-                    not self.deployment_mode,
+                    train = not self.deployment_mode,
                     mutable=["batch_stats"],
                     rngs={"dropout": dropout_subkey},
                 )
@@ -238,7 +241,7 @@ class ContinuousCriticModel(Network, ABC):
                     np.array(previous_actions),
                     np.array(actions),
                     carry,
-                    not self.deployment_mode,
+                    train = not self.deployment_mode,
                     mutable=["batch_stats"],
                     rngs={"dropout": dropout_subkey},
                 )
@@ -265,7 +268,7 @@ class ContinuousCriticModel(Network, ABC):
                     np.array(previous_actions),
                     np.array(actions),
                     carry,
-                    not self.deployment_mode,
+                    train = not self.deployment_mode,
                     mutable=["batch_stats"],
                     rngs={"dropout": dropout_subkey},
                 )
@@ -281,7 +284,7 @@ class ContinuousCriticModel(Network, ABC):
                     np.array(previous_actions),
                     np.array(actions),
                     carry,
-                    not self.deployment_mode,
+                    train = not self.deployment_mode,
                     mutable=["batch_stats"],
                     rngs={"dropout": dropout_subkey},
                 )

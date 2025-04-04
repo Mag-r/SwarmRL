@@ -191,7 +191,7 @@ class BaslerCameraObservable(Observable, ABC):
                 f"Image queue is starting to fill. Current size {self.image_queue.qsize()}"
             )
         # self.image_queue.put(image)
-        self.track_blue_ball(image)
+        # self.track_blue_ball(image)
         image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         positions = self.extract_positions(image)
         if positions.shape[1] < self.number_particles:
@@ -201,7 +201,7 @@ class BaslerCameraObservable(Observable, ABC):
         elif positions.shape[1] > self.number_particles:
             positions = positions[:, : self.number_particles, :]
 
-        positions = np.concatenate((positions, self.blue_ball_position), axis=1)
+        # positions = np.concatenate((positions, self.blue_ball_position), axis=1)
         return positions
 
     def track_blue_ball(self, image: onp.ndarray):
