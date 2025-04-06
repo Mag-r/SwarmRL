@@ -237,6 +237,7 @@ class SoftActorCriticGradientLoss(Loss):
         return mean_critic_grad, mean_actor_grad
 
     @partial(jax.jit, static_argnames=["self", "critic_network", "actor_network"])
+    @partial(jax.jit, static_argnames=["self", "critic_network", "actor_network"])
     def _calculate_actor_loss(
         self,
         actor_network_params: FrozenDict,

@@ -8,7 +8,7 @@ import logging
 import os
 
 logger = logging.getLogger(__name__)
-action_dimension = 7
+action_dimension = 4
 
 
 class ActorNet(nn.Module):
@@ -28,11 +28,11 @@ class ActorNet(nn.Module):
         )
         self.lstm = self.ScanLSTM(features=64)
         temperature = self.param(
-            "temperature", lambda key, shape: jnp.full(shape, 0.0), (1,)
+            "temperature", lambda key, shape: jnp.full(shape, jnp.log(0.2)), (1,)
         )
 
     @nn.compact
-    def __call__(self, x, previous_actions, carry=None):
+    def __call__(self, x, previous_actions, carry=None, train:bool = False):
         batch_size, sequence_length = x.shape[0], x.shape[1]
         x = x.reshape((batch_size, sequence_length, -1))
         mean = jnp.mean(x, keepdims=True, axis=-1)
@@ -47,12 +47,17 @@ class ActorNet(nn.Module):
             )
             print("Action Net: new carry initialized")
         carry, x = self.lstm(carry, x)
+        x = nn.relu(x)
+        x = nn.BatchNorm(use_running_average=not train)(x)
         x = x.reshape((batch_size, -1))
-
         actor = nn.Dense(features=64, name="Actor_1")(x)
+        actor = nn.Dropout(rate=0.1, deterministic=not train, broadcast_dims=(0,))(actor)
         actor = nn.relu(actor)
+        actor = nn.BatchNorm(use_running_average=not train)(actor)
         actor = nn.Dense(features=64, name="Actor_2")(actor)
         actor = nn.relu(actor)
+        actor = jnp.concatenate([actor, x], axis=-1)
+        actor = nn.BatchNorm(use_running_average=not train)(actor)
 
         actor = nn.Dense(features=action_dimension * 2, name="Actor_out")(actor)
 
@@ -72,7 +77,7 @@ class CriticNet(nn.Module):
         self.lstm = self.ScanLSTM(features=64)
 
     @nn.compact
-    def __call__(self, x, previous_actions, action, carry=None):
+    def __call__(self, x, previous_actions, action, carry=None, train:bool = False):
         batch_size, sequence_length = x.shape[0], x.shape[1]
 
         x = x.reshape((batch_size, sequence_length, -1))
@@ -88,18 +93,26 @@ class CriticNet(nn.Module):
             )
             print("Action Net: new carry initialized")
         carry, x = self.lstm(carry, x)
+        x = nn.relu(x)
+        x = nn.BatchNorm(use_running_average=not train)(x)
         x = x.reshape((batch_size, -1))
         x = jnp.concatenate([x, action], axis=-1)
-
         q_1 = nn.Dense(features=64)(x)
+        q_1 = nn.Dropout(rate=0.2, deterministic=not train, broadcast_dims=(0,))(q_1)
         q_2 = nn.Dense(features=64)(x)
+        q_2 = nn.Dropout(rate=0.1, deterministic=not train, broadcast_dims=(0,))(q_2)
         q_1 = nn.relu(q_1)
         q_2 = nn.relu(q_2)
+        q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
+        q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
         q_1 = nn.Dense(features=64)(q_1)
         q_2 = nn.Dense(features=64)(q_2)
         q_1 = nn.relu(q_1)
         q_2 = nn.relu(q_2)
-
+        q_1 = jnp.concatenate([q_1, x], axis=-1)
+        q_2 = jnp.concatenate([q_2, x], axis=-1)
+        q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
+        q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
         q_1 = nn.Dense(features=1)(q_1)
         q_2 = nn.Dense(features=1)(q_2)
         return q_1, q_2
@@ -132,7 +145,7 @@ def defineRLAgent(
     
 
     # Define a sampling_strategy
-    action_limits = jnp.array([[0,70],[0,70],[0,50], [0,50], [0.01, 3], [-0.8, 0.8], [-0.5, 0.5]])
+    action_limits = jnp.array([[0,70],[0,70],[0,50], [0,50]]) #[0.01, 3], [-0.8, 0.8], [-0.5, 0.5]
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
 
     value_function = srl.value_functions.TDReturnsSAC(gamma=0.8, standardize=True)
@@ -142,7 +155,7 @@ def defineRLAgent(
         input_shape=(
             1,
             sequence_length,
-            n_particles + 1,
+            n_particles,
             2,
         ),  # batch implicitly 1 ,time,H,W,channels for conv
         sampling_strategy=sampling_strategy,
@@ -156,7 +169,7 @@ def defineRLAgent(
         input_shape=(
             1,
             sequence_length,
-            n_particles + 1,
+            n_particles,
             2,
         ),  # batch implicitly 1 ,time,H,W,channels for conv
         action_dimension=action_dimension,
@@ -176,7 +189,7 @@ def defineRLAgent(
         task=task,
         observable=obs,
         loss=loss,
-        max_samples_in_trajectory=1000,
+        max_samples_in_trajectory=2000,
         lock=lock
     )
     return protocol

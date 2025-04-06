@@ -31,9 +31,8 @@ class ActorNet(nn.Module):
     (batch,time,features)
     When dense at beginning, probably flatten is required
     """
-
+ 
     def setup(self):
-        self.bn = nn.BatchNorm()
         # Define a scanned LSTM cell
         self.ScanLSTM = nn.scan(
             nn.OptimizedLSTMCell,
@@ -48,13 +47,14 @@ class ActorNet(nn.Module):
         )
 
     @nn.compact
-    def __call__(self, x, previous_actions, carry=None, train: bool = True):
+    def __call__(self, x, previous_actions, carry=None, train:bool = False):
         batch_size, sequence_length = x.shape[0], x.shape[1]
-
-        x = (x - jnp.mean(x, keepdims=True)) / (jnp.std(x, keepdims=True) + 1e-6)
         x = x.reshape((batch_size, sequence_length, -1))
-
-        x = jnp.concatenate([x, previous_actions], axis=-1)
+        mean = jnp.mean(x, keepdims=True, axis=-1)
+        std = jnp.std(x, keepdims=True, axis=-1)
+        x = (x - mean) / (std + 1e-6)
+        x = jnp.concatenate([x, mean, std], axis = -1)
+        # x = jnp.concatenate([x, previous_actions], axis=-1)
         # Initialize carry if it's not provided
         if carry is None:
             carry = self.lstm.initialize_carry(
@@ -62,13 +62,17 @@ class ActorNet(nn.Module):
             )
             print("Action Net: new carry initialized")
         carry, x = self.lstm(carry, x)
+        x = nn.relu(x)
+        x = nn.BatchNorm(use_running_average=not train)(x)
         x = x.reshape((batch_size, -1))
-        x = nn.Dropout(0.1)(x, deterministic=not train)
-        x = self.bn(x, use_running_average=not train)
         actor = nn.Dense(features=64, name="Actor_1")(x)
+        actor = nn.Dropout(rate=0.1, deterministic=not train, broadcast_dims=(0,))(actor)
         actor = nn.relu(actor)
+        actor = nn.BatchNorm(use_running_average=not train)(actor)
         actor = nn.Dense(features=64, name="Actor_2")(actor)
         actor = nn.relu(actor)
+        actor = jnp.concatenate([actor, x], axis=-1)
+        actor = nn.BatchNorm(use_running_average=not train)(actor)
 
         actor = nn.Dense(features=action_dimension * 2, name="Actor_out")(actor)
 
@@ -77,7 +81,7 @@ class ActorNet(nn.Module):
 
 class CriticNet(nn.Module):
     def setup(self):
-        self.bn = nn.BatchNorm()
+        # Define a scanned LSTM cell
         self.ScanLSTM = nn.scan(
             nn.OptimizedLSTMCell,
             variable_broadcast="params",
@@ -88,45 +92,50 @@ class CriticNet(nn.Module):
         self.lstm = self.ScanLSTM(features=64)
 
     @nn.compact
-    def __call__(self, x, previous_actions, action, carry=None, train: bool = True):
+    def __call__(self, x, previous_actions, action, carry=None, train:bool = False):
         batch_size, sequence_length = x.shape[0], x.shape[1]
-        x = (x - x.mean(keepdims=True)) / (x.std(keepdims=True) + 1e-8)
+
         x = x.reshape((batch_size, sequence_length, -1))
-
-        x = jnp.concatenate([x, previous_actions], axis=-1)
-
+        mean = jnp.mean(x, keepdims=True, axis=-1)
+        std = jnp.std(x, keepdims=True, axis=-1)
+        x = (x - mean) / (std + 1e-6)
+        x = jnp.concatenate([x, mean, std], axis = -1)
+        # x = jnp.concatenate([x, previous_actions], axis=-1)
+        # Initialize carry if it's not provided
         if carry is None:
             carry = self.lstm.initialize_carry(
                 jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
             )
             print("Action Net: new carry initialized")
         carry, x = self.lstm(carry, x)
+        x = nn.relu(x)
+        x = nn.BatchNorm(use_running_average=not train)(x)
         x = x.reshape((batch_size, -1))
-
-        # Hier BatchNorm mit train-Flag nutzen
-        x = self.bn(x, use_running_average=not train)
-
         x = jnp.concatenate([x, action], axis=-1)
-        x = nn.Dropout(0.1)(x, deterministic=not train)
         q_1 = nn.Dense(features=64)(x)
+        q_1 = nn.Dropout(rate=0.2, deterministic=not train, broadcast_dims=(0,))(q_1)
         q_2 = nn.Dense(features=64)(x)
+        q_2 = nn.Dropout(rate=0.1, deterministic=not train, broadcast_dims=(0,))(q_2)
         q_1 = nn.relu(q_1)
         q_2 = nn.relu(q_2)
+        q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
+        q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
         q_1 = nn.Dense(features=64)(q_1)
         q_2 = nn.Dense(features=64)(q_2)
         q_1 = nn.relu(q_1)
         q_2 = nn.relu(q_2)
-
+        q_1 = jnp.concatenate([q_1, x], axis=-1)
+        q_2 = jnp.concatenate([q_2, x], axis=-1)
+        q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
+        q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
         q_1 = nn.Dense(features=1)(q_1)
         q_2 = nn.Dense(features=1)(q_2)
         return q_1, q_2
-
-
 sequence_length = 3
 resolution = 253
 action_dimension = 4
 number_particles = 7
-learning_rate = 1e-3
+learning_rate = 5e-4
 
 obs = srl.observables.Observable(0)
 task = srl.tasks.ExperimentHexagonTask(number_particles)
@@ -148,7 +157,7 @@ exploration_policy = srl.exploration_policies.GlobalOUExploration(
 
 
 # Define a sampling_strategy
-action_limits = jnp.array([[0, 100], [0, 100], [0, 50], [0, 50]])
+action_limits = jnp.array([[0, 70], [0, 70], [0, 50], [0, 50]])
 sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(
     action_dimension=action_dimension, action_limits=action_limits
 )
@@ -194,14 +203,14 @@ protocol = srl.agents.MPIActorCriticAgent(
     task=task,
     observable=obs,
     loss=loss,
-    max_samples_in_trajectory=100,
+    max_samples_in_trajectory=2000,
 )
 # Initialize the simulation system
 
 engine = OfflineLearning()
 
-# protocol.restore_agent(identifier="ExperimentHexagonTask")
-protocol.restore_trajectory(identifier="ExperimentHexagonTask_episode_9")
+protocol.restore_agent(identifier="ExperimentHexagonTask")
+protocol.restore_trajectory(identifier="ExperimentHexagonTask_episode_3")
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
-reward = rl_trainer.perform_rl_training(engine, 100, 3)
+reward = rl_trainer.perform_rl_training(engine, 100, 30)
