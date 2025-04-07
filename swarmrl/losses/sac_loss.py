@@ -32,7 +32,8 @@ class SoftActorCriticGradientLoss(Loss):
         minimum_entropy: float = 0.0,
         polyak_averaging_tau: float = 0.005,
         lock: Lock = Lock(),
-        validation_split: float = 0.1,
+        validation_step: float = 10,
+        fix_temperature: bool = False,
     ):
         """
         Constructor for the SoftActorCriticGradientLoss class.
@@ -61,6 +62,10 @@ class SoftActorCriticGradientLoss(Loss):
         self.running_std = 1.0
         self.lock = lock
         self.validation_split = validation_split
+        self.fix_temperature = fix_temperature
+        self.validation_losses = []
+        self.training_losses = []
+        self.temperature_history = []
 
     def _calculate_loss_validation(
         self,
@@ -76,7 +81,8 @@ class SoftActorCriticGradientLoss(Loss):
         actions: jnp.ndarray,
         action_sequence: jnp.ndarray,
     ):
-        desired_q_value, _ = self._calculate_desired_q_value(
+        log_temp = actor_network_params["temperature"]
+        desired_q_value, updated_batch_stats_target = self._calculate_desired_q_value(
             critic_network,
             actor_network_params,
             actor_network,
@@ -84,6 +90,7 @@ class SoftActorCriticGradientLoss(Loss):
             next_carry,
             rewards,
             action_sequence,
+            log_temp,
         )
         (
             critic_loss,
@@ -108,6 +115,7 @@ class SoftActorCriticGradientLoss(Loss):
             feature_data,
             carry,
             action_sequence,
+            jax.lax.stop_gradient(log_temp),
         )
         temperature_loss = self._calculate_temperature_loss(
             actor_network_params, log_probs
@@ -213,7 +221,7 @@ class SoftActorCriticGradientLoss(Loss):
         actor_network.update_model(
             actor_grad, updated_batch_stats=updated_batch_stats_actor
         )
-        actor_network.update_model(temperature_grad)
+        actor_network.update_model(temperature_grad) if not self.fix_temperature else None
 
         critic_network.polyak_averaging(self.polyak_averaging_tau)
         return actor_loss, critic_loss, temperature_loss, error_predicted_reward
@@ -248,7 +256,7 @@ class SoftActorCriticGradientLoss(Loss):
         carry: tuple,
         action_sequence: jnp.ndarray,
         log_temp: jnp.ndarray,
-    ) -> tuple(float, tuple):
+    ) -> tuple[float, tuple]:
         """Calculates the actor loss. Eq 7 in SAC-paper.
 
         Args:
@@ -294,7 +302,7 @@ class SoftActorCriticGradientLoss(Loss):
         actions: jnp.ndarray,
         action_sequence: jnp.ndarray,
         desired_q_value: jnp.ndarray,
-    )-> tuple(float, tuple):
+    ) -> tuple[float, tuple]:
         """Calculates the critic loss. Eq 5 in SAC-paper.
 
         Args:
@@ -346,7 +354,7 @@ class SoftActorCriticGradientLoss(Loss):
         action_sequence,
         log_temp,
     ):
-        
+
         next_action, next_log_probs, _ = actor_network.compute_action_training(
             actor_network_params,
             next_feature_data,
@@ -375,7 +383,9 @@ class SoftActorCriticGradientLoss(Loss):
         return desired_q_value, updated_batch_stats_target
 
     @partial(jax.jit, static_argnames=["self"])
-    def _calculate_temperature_loss(self, actor_network_params: FrozenDict, log_probs: jnp.ndarray) -> float:
+    def _calculate_temperature_loss(
+        self, actor_network_params: FrozenDict, log_probs: jnp.ndarray
+    ) -> float:
         """Calculates the temperature loss. Eq 18 in SAC-paper.
 
         Args:
@@ -424,6 +434,7 @@ class SoftActorCriticGradientLoss(Loss):
         """
         n_samples = data.shape[0]
         split_index = int(n_samples * self.validation_split)
+        
         return data[:split_index], data[split_index:]
 
     def compute_loss(
@@ -475,6 +486,7 @@ class SoftActorCriticGradientLoss(Loss):
             and (jnp.shape(reward_data)[0] == iterations_next)
         ), f"feature_data = {feature_data.shape}, next_feature_data = {next_feature_data.shape}"
 
+        
         feature_training, feature_validation = self._split_training_validation(
             feature_data
         )
@@ -502,7 +514,7 @@ class SoftActorCriticGradientLoss(Loss):
 
         if jnp.isnan(reward_data).any():
             raise ValueError("Nan in reward data")
-        first_actor_loss, first_critic_loss, first_temperature_loss, _ = (
+        actor_training_loss, critic_training_loss, temperature_trainig_loss, _ = (
             self._calculate_loss_apply_gradients(
                 critic_network_params=critic_network.critic_state.params,
                 critic_network=critic_network,
@@ -516,38 +528,6 @@ class SoftActorCriticGradientLoss(Loss):
                 actions=action_training,
                 action_sequence=action_sequence_training,
             )
-        )
-        # for _ in range(10):
-        #     self._calculate_loss(
-        #         critic_network_params=critic_network.critic_state.params,
-        #         critic_network=critic_network,
-        #         actor_network_params=actor_network.model_state.params,
-        #         actor_network=actor_network,
-        #         feature_data=feature_data,
-        #         next_feature_data=next_feature_data,
-        #         carry=carry,
-        #         next_carry=next_carry_data,
-        #         rewards=reward_data,
-        #         actions=actions,
-        #         action_sequence=action_sequence,
-        #     )
-        (
-            second_actor_loss,
-            second_critic_loss,
-            second_temperature_loss,
-            self.error_predicted_reward,
-        ) = self._calculate_loss_apply_gradients(
-            critic_network_params=critic_network.critic_state.params,
-            critic_network=critic_network,
-            actor_network_params=actor_network.model_state.params,
-            actor_network=actor_network,
-            feature_data=feature_training,
-            next_feature_data=next_feature_training,
-            carry=carry_training,
-            next_carry=next_carry_training,
-            rewards=reward_training,
-            actions=action_training,
-            action_sequence=action_sequence_training,
         )
 
         actor_validation_loss, critic_validation_loss, temperature_validation_loss = (
@@ -565,10 +545,18 @@ class SoftActorCriticGradientLoss(Loss):
                 action_sequence=action_sequence_validation,
             )
         )
+        self.temperature_history.append(
+            actor_network.get_exp_temperature())
+        self.training_losses.append(
+            (actor_training_loss, critic_training_loss, temperature_trainig_loss)
+        )
+        self.validation_losses.append(
+            (actor_validation_loss, critic_validation_loss, temperature_validation_loss)
+        )
 
         logger.info(f"{actor_network.get_exp_temperature()=}")
         logger.info(
-            f"first iteration losses = (a,c,t){first_actor_loss, first_critic_loss, first_temperature_loss} \n second iteration losses = {second_actor_loss, second_critic_loss, second_temperature_loss}"
+            f"training losses = (a,c,t){actor_training_loss, critic_training_loss, temperature_trainig_loss}"
         )
         logger.info(
             f"validation losses = (a,c,t){actor_validation_loss, critic_validation_loss, temperature_validation_loss}"
