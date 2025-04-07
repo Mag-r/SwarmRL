@@ -225,7 +225,7 @@ class BaslerCameraObservable(Observable, ABC):
         cleaned_image = self.model_state.apply_fn(self.model_state.params, image)
         processed_image, contours = self.threshold_and_extract_contours(cleaned_image)
 
-        min_length = 4
+        min_length = 1
         contours = [
             contour for contour in contours if cv2.arcLength(contour, True) > min_length
         ]

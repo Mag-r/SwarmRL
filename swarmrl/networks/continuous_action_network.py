@@ -314,8 +314,9 @@ class ContinuousActionModel(Network, ABC):
         logits = logits.squeeze()
         
         logger.info(
-            f"covariance {np.mean(np.exp(logits[self.action_dimension:]) * (self.sampling_strategy.action_limits[:,1] - self.sampling_strategy.action_limits[:,0]))}"
+            f"covariance {np.exp(logits[self.action_dimension:]) * (self.sampling_strategy.action_limits[:,1] - self.sampling_strategy.action_limits[:,0])}"
         )
+        logger.info(f"mean {logits[:self.action_dimension]}")
         action, _ = self.sampling_strategy(
             logits[np.newaxis, :], subkey=sampling_subkey, calculate_log_probs=False
         )
