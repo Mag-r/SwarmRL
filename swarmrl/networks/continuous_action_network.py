@@ -318,7 +318,7 @@ class ContinuousActionModel(Network, ABC):
         )
         logger.info(f"mean {logits[:self.action_dimension]}")
         action, _ = self.sampling_strategy(
-            logits[np.newaxis, :], subkey=sampling_subkey, calculate_log_probs=False
+            logits[np.newaxis, :], subkey=sampling_subkey, calculate_log_probs=False, deployment_mode=self.deployment_mode
         )
         # action = self.exploration_policy(action)
         return action

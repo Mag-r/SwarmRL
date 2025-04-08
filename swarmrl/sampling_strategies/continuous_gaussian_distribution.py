@@ -95,7 +95,5 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
         action = (
             self.squash_action(action) if self.action_limits is not None else action
         )
-        logger.debug(f"mean covariance {jnp.mean(cov_matrices)}")
         logger.debug(f"{action=}, {log_probs=}, with shape {action.shape}")
-        logger.debug(f"{cov_matrices=}")
         return action, log_probs

@@ -190,7 +190,7 @@ class BaslerCameraObservable(Observable, ABC):
             logger.warning(
                 f"Image queue is starting to fill. Current size {self.image_queue.qsize()}"
             )
-        # self.image_queue.put(image)
+        self.image_queue.put(image)
         # self.track_blue_ball(image)
         image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         positions = self.extract_positions(image)
@@ -229,11 +229,8 @@ class BaslerCameraObservable(Observable, ABC):
         contours = [
             contour for contour in contours if cv2.arcLength(contour, True) > min_length
         ]
-        original_image = onp.array(original_image, dtype=np.uint8)
-        cv2.drawContours(original_image, contours, -1, (255, 0, 0), 2)
-        self.image_queue.put(original_image)
-        # contour_image = cv2.cvtColor(cleaned_image, cv2.COLOR_GRAY2BGR)
-        # cv2.drawContours(contour_image, contours, -1, 255, -1)
+        contour_image = onp.array(original_image, dtype=np.uint8)
+        cv2.drawContours(contour_image, contours, -1, (255, 0, 0), 2)
         # self.image_queue.put(contour_image)
         attempts = 0
         while len(contours) != self.number_particles and attempts < 5:

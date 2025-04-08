@@ -28,39 +28,22 @@ class ActorNet(nn.Module):
         )
         self.lstm = self.ScanLSTM(features=64)
         temperature = self.param(
-            "temperature", lambda key, shape: jnp.full(shape, jnp.log(0.2)), (1,)
+            "temperature", lambda key, shape: jnp.full(shape, jnp.log(0.01)), (1,)
         )
 
     @nn.compact
     def __call__(self, x, previous_actions, carry=None, train:bool = False):
-        batch_size, sequence_length = x.shape[0], x.shape[1]
-        x = x.reshape((batch_size, sequence_length, -1))
-        mean = jnp.mean(x, keepdims=True, axis=-1)
-        std = jnp.std(x, keepdims=True, axis=-1)
-        x = (x - mean) / (std + 1e-6)
-        x = jnp.concatenate([x, mean, std], axis = -1)
-        # x = jnp.concatenate([x, previous_actions], axis=-1)
-        # Initialize carry if it's not provided
         if carry is None:
             carry = self.lstm.initialize_carry(
                 jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
             )
-            print("Action Net: new carry initialized")
-        carry, x = self.lstm(carry, x)
-        x = nn.relu(x)
-        x = nn.BatchNorm(use_running_average=not train)(x)
-        x = x.reshape((batch_size, -1))
-        actor = nn.Dense(features=64, name="Actor_1")(x)
-        actor = nn.Dropout(rate=0.1, deterministic=not train, broadcast_dims=(0,))(actor)
-        actor = nn.relu(actor)
-        actor = nn.BatchNorm(use_running_average=not train)(actor)
-        actor = nn.Dense(features=64, name="Actor_2")(actor)
-        actor = nn.relu(actor)
-        actor = jnp.concatenate([actor, x], axis=-1)
-        actor = nn.BatchNorm(use_running_average=not train)(actor)
-
-        actor = nn.Dense(features=action_dimension * 2, name="Actor_out")(actor)
-
+        mean = self.param("mean", nn.initializers.zeros, (action_dimension,))
+        std = self.param("std", lambda key, shape: jnp.full(shape, -1.0), (action_dimension,))
+        batch_size= x.shape[0]
+        nn.BatchNorm(use_running_average=not train)(x)
+        mean = jnp.tile(mean, (batch_size, 1))
+        std = jnp.tile(std, (batch_size, 1))
+        actor = jnp.concatenate([mean, std], axis=-1)
         return actor, carry
 
 
@@ -79,42 +62,20 @@ class CriticNet(nn.Module):
     @nn.compact
     def __call__(self, x, previous_actions, action, carry=None, train:bool = False):
         batch_size, sequence_length = x.shape[0], x.shape[1]
-
-        x = x.reshape((batch_size, sequence_length, -1))
-        mean = jnp.mean(x, keepdims=True, axis=-1)
-        std = jnp.std(x, keepdims=True, axis=-1)
+        x = x.reshape((batch_size, -1))
+        mean = jnp.mean(x, keepdims=True)
+        std = jnp.std(x, keepdims=True)
         x = (x - mean) / (std + 1e-6)
-        x = jnp.concatenate([x, mean, std], axis = -1)
-        # x = jnp.concatenate([x, previous_actions], axis=-1)
-        # Initialize carry if it's not provided
-        if carry is None:
-            carry = self.lstm.initialize_carry(
-                jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
-            )
-            print("Action Net: new carry initialized")
-        carry, x = self.lstm(carry, x)
-        x = nn.relu(x)
-        x = nn.BatchNorm(use_running_average=not train)(x)
         x = x.reshape((batch_size, -1))
         x = jnp.concatenate([x, action], axis=-1)
-        q_1 = nn.Dense(features=64)(x)
-        q_1 = nn.Dropout(rate=0.2, deterministic=not train, broadcast_dims=(0,))(q_1)
-        q_2 = nn.Dense(features=64)(x)
-        q_2 = nn.Dropout(rate=0.1, deterministic=not train, broadcast_dims=(0,))(q_2)
-        q_1 = nn.relu(q_1)
-        q_2 = nn.relu(q_2)
+        q_1 = nn.Dense(features=12, name="Critic_1")(x)
+        q_2 = nn.Dense(features=12, name="Critic_2")(x)
+        q_1 = nn.sigmoid(q_1)
+        q_2 = nn.sigmoid(q_2)
         q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
         q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
-        q_1 = nn.Dense(features=64)(q_1)
-        q_2 = nn.Dense(features=64)(q_2)
-        q_1 = nn.relu(q_1)
-        q_2 = nn.relu(q_2)
-        q_1 = jnp.concatenate([q_1, x], axis=-1)
-        q_2 = jnp.concatenate([q_2, x], axis=-1)
-        q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
-        q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
-        q_1 = nn.Dense(features=1)(q_1)
-        q_2 = nn.Dense(features=1)(q_2)
+        q_1 = nn.Dense(features=1)(x)
+        q_2 = nn.Dense(features=1)(x)
         return q_1, q_2
 
 
@@ -148,7 +109,7 @@ def defineRLAgent(
     action_limits = jnp.array([[0,70],[0,70],[0,50], [0,50]]) #[0.01, 3], [-0.8, 0.8], [-0.5, 0.5]
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
 
-    value_function = srl.value_functions.TDReturnsSAC(gamma=0.8, standardize=True)
+    value_function = srl.value_functions.TDReturnsSAC(gamma=0.7, standardize=True)
     actor_network = srl.networks.ContinuousActionModel(
         flax_model=actor,
         optimizer=optimizer,
@@ -177,9 +138,11 @@ def defineRLAgent(
 
     loss = srl.losses.SoftActorCriticGradientLoss(
         value_function=value_function,
-        minimum_entropy=-action_dimension,
+        minimum_entropy=-action_dimension * 10,
         polyak_averaging_tau=0.05,
-        lock=lock
+        lock=lock,
+        validation_split=0.1,
+        fix_temperature=False,
     )
 
     protocol = srl.agents.MPIActorCriticAgent(
