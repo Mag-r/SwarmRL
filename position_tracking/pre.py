@@ -86,13 +86,18 @@ def label_images():
     detected_images = []
     detected_centers = []
 
-    for i in tqdm(range(171)):
+    for i in tqdm(range(155)):
         try:
             image = cv.imread(f'../images/camera_image_{i:04d}.png')
-            image = image[:, :, 1]
-            centers, radii, count = find_circles_adaptive(image, 7, [7, 15], top_left_x=50, top_left_y=50, width_x=100, height_y=100, adaptive_thres_blocksize=3, adaptive_thres_const=-3, raft_center_threshold=80, min_sep_dist=14)
+            
+            image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
+            image =cv.resize(image, (506,506))
+            mask = (image[:, :, 2] > image[:, :, 1]) & (image[:, :, 2] > image[:, :, 0])
+            image[mask] = 0
+            gray_image = cv.cvtColor(image, cv.COLOR_RGB2GRAY)
+            centers, radii, count = find_circles_adaptive(gray_image, 7, [3, 15], top_left_x=160, top_left_y=160, width_x=200, height_y=200, adaptive_thres_blocksize=7, adaptive_thres_const=-10, raft_center_threshold=80, min_sep_dist=11)
             if count == 7:
-                detected_images.append(image)
+                detected_images.append(gray_image)
                 detected_centers.append(centers)
             else:
                 print(f"detected {count} particles in image:{i}")
@@ -102,7 +107,7 @@ def label_images():
     detected_images = np.array(detected_images)
 
     detected_images =(detected_images- detected_images.mean())/detected_images.std()
-    detected_images = np.expand_dims(detected_images, axis=-1)
+    # detected_images = np.expand_dims(detected_images, axis=-1)
 
     print(detected_centers.shape)
     print(detected_images.shape)    
