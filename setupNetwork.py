@@ -8,7 +8,7 @@ import logging
 import os
 
 logger = logging.getLogger(__name__)
-action_dimension = 4
+action_dimension = 7
 
 
 class ActorNet(nn.Module):
@@ -37,14 +37,14 @@ class ActorNet(nn.Module):
             carry = self.lstm.initialize_carry(
                 jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
             )
-        mean = self.param("mean", nn.initializers.zeros, (action_dimension,))
-        std = self.param("std", lambda key, shape: jnp.full(shape, -1.0), (action_dimension,))
-        batch_size= x.shape[0]
-        nn.BatchNorm(use_running_average=not train)(x)
-        mean = jnp.tile(mean, (batch_size, 1))
-        std = jnp.tile(std, (batch_size, 1))
-        actor = jnp.concatenate([mean, std], axis=-1)
-        return actor, carry
+        x = x.reshape((x.shape[0], -1))
+        x = (x-jnp.mean(x, keepdims=True)) / (jnp.std(x, keepdims=True) + 1e-6)
+        x= nn.Dense(features=64)(x)
+        x = nn.sigmoid(x)
+        x = nn.Dropout(rate=0.3)(x, deterministic=not train)
+        x = nn.BatchNorm(use_running_average=not train)(x)
+        x = nn.Dense(features=action_dimension*2)(x)
+        return x, carry
 
 
 class CriticNet(nn.Module):
@@ -68,10 +68,12 @@ class CriticNet(nn.Module):
         x = (x - mean) / (std + 1e-6)
         x = x.reshape((batch_size, -1))
         x = jnp.concatenate([x, action], axis=-1)
-        q_1 = nn.Dense(features=12, name="Critic_1")(x)
-        q_2 = nn.Dense(features=12, name="Critic_2")(x)
+        q_1 = nn.Dense(features=64, name="Critic_1")(x)
+        q_2 = nn.Dense(features=64, name="Critic_2")(x)
         q_1 = nn.sigmoid(q_1)
         q_2 = nn.sigmoid(q_2)
+        q_1 = nn.Dropout(rate=0.3)(q_1, deterministic=not train)
+        q_2 = nn.Dropout(rate=0.2)(q_2, deterministic=not train)
         q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
         q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
         q_1 = nn.Dense(features=1)(x)
@@ -106,7 +108,7 @@ def defineRLAgent(
     
 
     # Define a sampling_strategy
-    action_limits = jnp.array([[0,70],[0,70],[0,50], [0,50]]) #[0.01, 3], [-0.8, 0.8], [-0.5, 0.5]
+    action_limits = jnp.array([[0,70],[0,70],[0,50], [0,50], [0.01, 3], [-0.8, 0.8], [-0.5, 0.5]])
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
 
     value_function = srl.value_functions.TDReturnsSAC(gamma=0.7, standardize=True)
@@ -116,7 +118,7 @@ def defineRLAgent(
         input_shape=(
             1,
             sequence_length,
-            n_particles,
+            n_particles + 2,
             2,
         ),  # batch implicitly 1 ,time,H,W,channels for conv
         sampling_strategy=sampling_strategy,
@@ -130,7 +132,7 @@ def defineRLAgent(
         input_shape=(
             1,
             sequence_length,
-            n_particles,
+            n_particles + 2,
             2,
         ),  # batch implicitly 1 ,time,H,W,channels for conv
         action_dimension=action_dimension,
