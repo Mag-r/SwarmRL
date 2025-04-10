@@ -177,12 +177,13 @@ class ContinuousActionModel(Network, ABC):
         temperature : float
                 Temperature of the model.
         """
+        params = self.model_state.params
+        logger.info(f"current value and shape of temperature: {params['temperature'], np.shape(params['temperature'])}")
+        params["temperature"] = np.array([np.log(exp_temperature)])  
         self.model_state = self.model_state.replace(
-            params={
-                **self.model_state.params,
-                "temperature": np.log(exp_temperature),
-            }
+            params=params,
         )
+        logger.info(f"new value and shape of temperature: {params['temperature'], np.shape(params['temperature'])}")
         logger.info(f"Temperature set to {exp_temperature}")
         
     def update_model(self, grads, updated_batch_stats=None):

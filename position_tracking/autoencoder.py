@@ -19,7 +19,8 @@ logging.basicConfig(
 )
 # Load data
 scale=2
-input_data = np.load("detected_images.npy")[:,::scale,::scale, np.newaxis]
+input_data = np.load("detected_images.npy")[:,::scale,::scale]
+print(input_data.shape)
 
 ground_truth_positions = np.load("detected_centers.npy")
 
@@ -95,11 +96,11 @@ def train_step(state, batch, target, weight):
 
 # Create train state
 def create_train_state(rng, model):
-    dummy_input = jnp.ones((1, int(506/scale), int(506/scale), 1))
+    dummy_input = jnp.ones((1, int(506/scale), int(506/scale), 3))
     params = model.init(rng, dummy_input)
     model_summary = model.tabulate(rng, dummy_input)
     print(model_summary)
-    lr_schedule = optax .schedules.exponential_decay(1e-4, 300, 0.99)
+    lr_schedule = optax .schedules.exponential_decay(1e-4, 30, 0.99)
     optimizer = optax.inject_hyperparams(optax.adam)(learning_rate=lr_schedule)
     return train_state.TrainState.create(
         apply_fn=model.apply, params=params, tx=optimizer
@@ -114,7 +115,7 @@ model = Autoencoder()
 state = create_train_state(rng, model)
 
 weight = np.ones_like(ground_truth_images[0])
-weight[50:150, 50:150] = 30 # Adjust this weight based on imbalance
+weight[50:150, 50:150] = 5 # Adjust this weight based on imbalance
 
 def save_model(state, path):
     with open(path, "wb") as f:
@@ -125,45 +126,53 @@ def load_model(path):
         logger.info(f"Loading model from {path}")
         return pickle.load(f)
 
-loaded_params = load_model("../Models/autoencoder_3_27.pkl")
+loaded_params = load_model("autoencoder_model/model_100.pkl")
 state = state.replace(params=loaded_params)
 training_losses = []
 validation_losses = []
-
-for epoch in range(10000):
-    losses = 0
-    for batch, target in zip(
-        np.array_split(input_data, 20), np.array_split(ground_truth_images, 20)
-    ):
-        state, loss = train_step(state, batch, target, weight)
-        losses += loss
-    logger.info(f"Epoch {epoch+1}, Loss: {losses:.6f}")
-    if np.isnan(loss):
-        raise ValueError("Loss is NaN. Reduce learning rate.")
-    validation_loss = weighted_bce_loss(
-            state.params,
-            state.apply_fn,
-            validation_input_data,
-            validation_ground_truth_images,
-            weight,
-        )
-    training_losses.append(losses)
-    validation_losses.append(validation_loss)
+try:
+    for epoch in range(10000):
+        losses = 0
+        for batch, target in zip(
+            np.array_split(input_data, 20), np.array_split(ground_truth_images, 20)
+        ):
+            state, loss = train_step(state, batch, target, weight)
+            losses += loss
+        logger.info(f"Epoch {epoch+1}, Loss: {losses:.6f}")
+        if np.isnan(loss):
+            raise ValueError("Loss is NaN. Reduce learning rate.")
+        validation_loss = weighted_bce_loss(
+                state.params,
+                state.apply_fn,
+                validation_input_data,
+                validation_ground_truth_images,
+                weight,
+            )
+        training_losses.append(losses)
+        validation_losses.append(validation_loss)
+        plt.figure()
+        plt.loglog(training_losses, label="Training Loss")
+        plt.loglog(validation_losses, label="Validation Loss")
+        plt.legend()
+        plt.savefig("autoencoder_model/losses.png")
+        plt.close()
+        if epoch % 100 == 0:
+            
+            logger.info(f"Validation Loss: {validation_loss:.6f}")
+            example_output = state.apply_fn(state.params, example_image[None, ...])
+            fig, ax = plt.subplots(1, 3)
+            ax[0].imshow((example_image-np.min(example_image)) / (np.max(example_image)-np.min(example_image)))
+            ax[1].imshow(validation_ground_truth_images[0, :, :, 0], cmap="gray")
+            ax[2].imshow(example_output[0, :, :, 0], cmap="gray")
+            plt.savefig(f"autoencoder_model/output_{epoch}.png")
+            plt.close()
+            save_model(state, f"autoencoder_model/model_{epoch}.pkl")
+finally:
+    save_model(state, "autoencoder_model/final_model.pkl")
     plt.figure()
     plt.loglog(training_losses, label="Training Loss")
     plt.loglog(validation_losses, label="Validation Loss")
     plt.legend()
     plt.savefig("autoencoder_model/losses.png")
     plt.close()
-    if epoch % 100 == 0:
-        
-        logger.info(f"Validation Loss: {validation_loss:.6f}")
-        example_output = state.apply_fn(state.params, example_image[None, ...])
-        fig, ax = plt.subplots(1, 3)
-        ax[0].imshow(example_image[:, :, 0], cmap="gray")
-        ax[1].imshow(validation_ground_truth_images[0, :, :, 0], cmap="gray")
-        ax[2].imshow(example_output[0, :, :, 0], cmap="gray")
-        plt.savefig(f"autoencoder_model/output_{epoch}.png")
-        plt.close()
-        save_model(state, f"autoencoder_model/model_{epoch}.pkl")
 

@@ -45,7 +45,7 @@ model_state = TrainState.create(
         apply_fn=model.apply, params=params, tx=optax.adam(0.001)
     )
 # Load pretrained model
-with open("../Models/autoencoder_4_8.pkl", "rb") as f:
+with open("autoencoder_model/final_model.pkl", "rb") as f:
     model_params= pickle.load(f)
 
 model_state = model_state.replace(
@@ -72,7 +72,7 @@ ax[0].imshow(input_data)
 start = time.time()
 
 cleaned_image = model.apply(model_state.params, input_data.reshape(1, size, size, 1))
-cleaned_image = cleaned_image > 0.7
+cleaned_image = cleaned_image > 0.8
 cleaned_image = np.squeeze(cleaned_image)
 
 ax[1].imshow(cleaned_image[:,:], cmap='gray')
@@ -81,7 +81,7 @@ cleaned_image = cleaned_image[:,:]
 image = np.array(cleaned_image*255, dtype=np.uint8) 
 
 contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-min_area = 0
+min_area = 0.01
 print([cv2.arcLength(contour, False) for contour in contours])
 contours = [contour for contour in contours if cv2.arcLength(contour, True) > min_area]
 contour_image = cv2.cvtColor(input_data.squeeze(), cv2.COLOR_GRAY2RGB)

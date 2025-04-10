@@ -39,9 +39,8 @@ class ActorNet(nn.Module):
             )
         x = x.reshape((x.shape[0], -1))
         x = (x-jnp.mean(x, keepdims=True)) / (jnp.std(x, keepdims=True) + 1e-6)
-        x= nn.Dense(features=64)(x)
+        x= nn.Dense(features=12)(x)
         x = nn.sigmoid(x)
-        x = nn.Dropout(rate=0.3)(x, deterministic=not train)
         x = nn.BatchNorm(use_running_average=not train)(x)
         x = nn.Dense(features=action_dimension*2)(x)
         return x, carry
@@ -68,12 +67,11 @@ class CriticNet(nn.Module):
         x = (x - mean) / (std + 1e-6)
         x = x.reshape((batch_size, -1))
         x = jnp.concatenate([x, action], axis=-1)
-        q_1 = nn.Dense(features=64, name="Critic_1")(x)
-        q_2 = nn.Dense(features=64, name="Critic_2")(x)
+        q_1 = nn.Dense(features=12, name="Critic_1")(x)
+        q_2 = nn.Dense(features=12, name="Critic_2")(x)
         q_1 = nn.sigmoid(q_1)
         q_2 = nn.sigmoid(q_2)
-        q_1 = nn.Dropout(rate=0.3)(q_1, deterministic=not train)
-        q_2 = nn.Dropout(rate=0.2)(q_2, deterministic=not train)
+        q_1 = nn.Dropout(rate=0.1)(q_1, deterministic=not train)
         q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
         q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
         q_1 = nn.Dense(features=1)(x)
@@ -84,7 +82,7 @@ class CriticNet(nn.Module):
 
 
 def defineRLAgent(
-    obs, task: srl.tasks.Task, learning_rate: float, resolution: int=506, sequence_length: int=4, n_particles: int = 7, lock=None
+    obs, task: srl.tasks.Task, learning_rate: float, resolution: int=506, sequence_length: int=4, number_particles: int = 7, lock=None
 ) -> srl.agents.MPIActorCriticAgent:
     # Define the model
     
@@ -108,7 +106,7 @@ def defineRLAgent(
     
 
     # Define a sampling_strategy
-    action_limits = jnp.array([[0,70],[0,70],[0,50], [0,50], [0.01, 3], [-0.8, 0.8], [-0.5, 0.5]])
+    action_limits = jnp.array([[0,70],[0,70],[0,50], [0,50], [0.01, 5], [-0.8, 0.8], [-0.5, 0.5]])
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
 
     value_function = srl.value_functions.TDReturnsSAC(gamma=0.7, standardize=True)
@@ -118,7 +116,7 @@ def defineRLAgent(
         input_shape=(
             1,
             sequence_length,
-            n_particles + 2,
+            number_particles + 2,
             2,
         ),  # batch implicitly 1 ,time,H,W,channels for conv
         sampling_strategy=sampling_strategy,
@@ -132,7 +130,7 @@ def defineRLAgent(
         input_shape=(
             1,
             sequence_length,
-            n_particles + 2,
+            number_particles + 2,
             2,
         ),  # batch implicitly 1 ,time,H,W,channels for conv
         action_dimension=action_dimension,
@@ -140,7 +138,7 @@ def defineRLAgent(
 
     loss = srl.losses.SoftActorCriticGradientLoss(
         value_function=value_function,
-        minimum_entropy=-action_dimension * 10,
+        minimum_entropy=-action_dimension*2,
         polyak_averaging_tau=0.05,
         lock=lock,
         validation_split=0.1,

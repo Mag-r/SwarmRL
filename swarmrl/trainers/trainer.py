@@ -92,7 +92,7 @@ class Trainer:
         for agent in self.agents.values():
             if isinstance(agent, ActorCriticAgent):
                 ag_reward, ag_killed = agent.update_agent()
-                reward += np.mean(ag_reward)
+                reward += np.mean(ag_reward[-len(ag_reward) // 10 :])
                 switches.append(ag_killed)
 
         # Create a new interaction model.

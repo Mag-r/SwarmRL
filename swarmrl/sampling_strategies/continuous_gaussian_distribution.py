@@ -73,7 +73,7 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             log_probs = None
         else:
             epsilon = 1e-7
-            diag_cov = jnp.exp(logits[:, self.action_dimension :]) * (self.action_limits[:,1] - self.action_limits[:,0])/1000.0 + epsilon
+            diag_cov = jnp.exp(logits[:, self.action_dimension :]) * (self.action_limits[:,1] - self.action_limits[:,0]) + epsilon
             assert diag_cov.shape == logits[:, self.action_dimension :].shape, f"Diagonal covariance matrix must have the same shape as the logits. Has shape {diag_cov.shape}"
             cov_matrices = jnp.vectorize(lambda d: jnp.diag(d), signature="(n)->(n,n)")(
                 diag_cov
