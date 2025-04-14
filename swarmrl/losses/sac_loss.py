@@ -66,6 +66,7 @@ class SoftActorCriticGradientLoss(Loss):
         self.validation_losses = []
         self.training_losses = []
         self.temperature_history = []
+        self.iteration_counter = 0
 
     def _calculate_loss_validation(
         self,
@@ -561,3 +562,20 @@ class SoftActorCriticGradientLoss(Loss):
         logger.info(
             f"validation losses = (a,c,t){actor_validation_loss, critic_validation_loss, temperature_validation_loss}"
         )
+        if self.iteration_counter % 100 == 0:
+            jnp.save(
+                "training_losses.npy",
+                jnp.array(self.training_losses),
+                allow_pickle=True,
+            )
+            jnp.save(
+                "validation_losses.npy",
+                jnp.array(self.validation_losses),
+                allow_pickle=True,
+            )
+            jnp.save(
+                "temperature_history.npy",
+                jnp.array(self.temperature_history),
+                allow_pickle=True,
+            )
+        self.iteration_counter += 1

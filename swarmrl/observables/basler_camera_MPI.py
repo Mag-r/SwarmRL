@@ -22,6 +22,7 @@ from flax import linen as nn
 import time
 from matplotlib import pyplot as plt
 from swarmrl.observables.observable import Observable
+from skimage.feature import peak_local_max
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,7 @@ class BaslerCameraObservable(Observable, ABC):
         self.image_saving_thread.start()
         self.autoencoder = autoencoder
         self.init_autoencoder(model_path)
-        self.threshold = 0.8
+        self.threshold = 0.5
         self.init_blob_detector()
         self.blue_ball_position = np.zeros((1, 1, 2))
         self.target = np.zeros((1, 1, 2))
@@ -226,34 +227,32 @@ class BaslerCameraObservable(Observable, ABC):
         image = (image - np.mean(image)) / np.std(image)
         image = np.reshape(image, (1, self.resolution[0], self.resolution[1], 3))
         cleaned_image = self.model_state.apply_fn(self.model_state.params, image)
-        processed_image, contours = self.threshold_and_extract_contours(cleaned_image)
-
-        min_length = 1
-        contours = [
-            contour for contour in contours if cv2.arcLength(contour, True) > min_length
-        ]
+        # contours = self.threshold_and_extract_contours(cleaned_image)
+        positions = self.peak_detection(cleaned_image)
         contour_image = onp.array(original_image, dtype=np.uint8)
         # Ensure blue_ball_position is properly formatted
+        # cv2.drawContours(contour_image, contours, -1, (255, 255, 0), 2)
+        attempts = 0
+        while len(positions) != self.number_particles and attempts < 10:
+            self.threshold = (
+                self.threshold + (len(positions) - self.number_particles) * 0.002
+            )
+            self.threshold = onp.clip(self.threshold, 0.2, 0.99)
+            logger.info(
+                f"Detected {len(positions)} of {self.number_particles}. Threshold changed to {self.threshold}, in attempt {attempts}."
+            )
+            positions = self.peak_detection(cleaned_image)
+            attempts = attempts + 1
+        
+        for position in positions:
+            center = tuple([position[1], position[0]])
+            cv2.circle(contour_image, center, 2, (255, 0, 0), -1)
         center = tuple(self.blue_ball_position[0, 0].astype(int).tolist())
-        cv2.drawContours(contour_image, contours, -1, (255, 255, 0), 2)
         cv2.circle(contour_image, center, 4, (0, 0, 255), -1)
         self.image_queue.put(contour_image)
-        attempts = 0
-        while len(contours) != self.number_particles and attempts < 10:
-            self.threshold = (
-                self.threshold + (len(contours) - self.number_particles) * 0.002
-            )
-            self.threshold = np.clip(self.threshold, 0.5, 0.99)
-            logger.info(
-                f"Detected {len(contours)} of {self.number_particles}. Threshold changed to {self.threshold}, in attempt {attempts}."
-            )
-            processed_image, contours = self.threshold_and_extract_contours(
-                cleaned_image
-            )
-            attempts = attempts + 1
 
-        positions = np.array([cv2.boundingRect(contour) for contour in contours])
-        positions = positions[:, :2] + positions[:, 2:] / 2
+        # positions = np.array([cv2.boundingRect(contour) for contour in contours])
+        # positions = positions[:, :2] + positions[:, 2:] / 2
         if len(positions) != self.number_particles:
             logger.warning(
                 f"Number of particles detected {len(positions)} is not equal to the expected number of particles {self.number_particles}."
@@ -269,7 +268,20 @@ class BaslerCameraObservable(Observable, ABC):
         contours, _ = cv2.findContours(
             processed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
-        return processed_image, contours
+        min_length = 1
+        contours = [
+            contour for contour in contours if cv2.arcLength(contour, True) > min_length
+        ]
+        return contours
+
+    def peak_detection(self, cleaned_image):
+        """
+        Detects peaks in the image using the skimage feature module.
+        """
+        coordinates = peak_local_max(
+            onp.array(cleaned_image.squeeze()), min_distance=2, threshold_abs=self.threshold, num_peaks=self.number_particles
+        )
+        return coordinates
 
     def save_images_async(self):
         while True:

@@ -372,14 +372,14 @@ class ContinuousCriticModel(Network, ABC):
 
         self.critic_state = self.critic_state.replace(
             params=model_params_critics,
-            opt_state=opt_state_critic,
-            step=opt_step_critic,
+            # opt_state=opt_state_critic,
+            # step=opt_step_critic,
             batch_stats=batch_stats_critic,
         )
         self.target_state = self.target_state.replace(
             params=model_params_target,
-            opt_state=opt_state_target,
-            step=opt_step_target,
+            # opt_state=opt_state_target,
+            # step=opt_step_target,
             batch_stats=batch_stats_target,
         )
 

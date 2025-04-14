@@ -373,7 +373,7 @@ class ContinuousActionModel(Network, ABC):
 
         self.model_state = self.model_state.replace(
             params=model_params,
-            opt_state=opt_state,
+            # opt_state=opt_state,
             step=opt_step,
             batch_stats=batch_stats,
         )

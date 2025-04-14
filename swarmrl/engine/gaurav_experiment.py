@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6342
+    labview_port = 6340
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
-    TDMS_file_name = "H_".encode("utf-8")  # check with Gaurav
+    TDMS_file_name = "H_".encode("utf-8")  
 
     def __init__(self, simulation: GauravSim, update_rate: float = 20.0):
         super().__init__()
@@ -39,7 +39,7 @@ class GauravExperiment(Engine):
         """Establish TCP connections with LabVIEW"""
         self.labview_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.labview_publisher = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.labview_listener.settimeout(10)
+        self.labview_listener.settimeout(100)
 
         self.labview_listener.connect((self.labview_ip, self.labview_port))
         starting_message = self.receive_message()
@@ -142,11 +142,11 @@ class GauravExperiment(Engine):
         return action
 
     def seperate_rafts(self):
-        # seperation_action = MPIAction(
-        #     magnitude=[100, 100], frequency=[25, 36], keep_magnetic_field=10
-        # )
-        # self.send_action(seperation_action)
-        # time.sleep(10)
+        seperation_action = MPIAction(
+            magnitude=[100, 100], frequency=[25, 36], keep_magnetic_field=10
+        )
+        self.send_action(seperation_action)
+        time.sleep(10)
         pass
 
     def integrate(self, n_slices: int, force_model: GlobalForceFunction):
