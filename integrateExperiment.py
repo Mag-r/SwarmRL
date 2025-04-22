@@ -50,11 +50,11 @@ class Autoencoder(nn.Module):
         return nn.sigmoid(x)
 
 
-sequence_length = 1
+sequence_length = 2
 resolution = 253
 
-number_particles = 15
-learning_rate = 1e-3
+number_particles = 30
+learning_rate = 3e-3
 
 obs = BaslerCameraObservable(
     [resolution, resolution], Autoencoder(), model_path="Models/autoencoder_4_10.pkl", number_particles=number_particles
@@ -98,8 +98,8 @@ protocol = setupNetwork.defineRLAgent(
 )
 
 protocol.restore_agent(identifier=task.__class__.__name__)
-# protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_18")
-protocol.actor_network.set_temperature(0.01)
+# protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_6")
+protocol.actor_network.set_temperature(0.2)
 rl_trainer = Trainer([protocol], lock=lock, deployment_mode=learning_rate == 0.0)
 print("start training", flush=True)
-reward = rl_trainer.perform_rl_training(experiment, 1000, 10)
+reward = rl_trainer.perform_rl_training(experiment, 1000, 20)

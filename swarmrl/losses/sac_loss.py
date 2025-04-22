@@ -34,6 +34,7 @@ class SoftActorCriticGradientLoss(Loss):
         lock: Lock = Lock(),
         validation_split: float = 0.1,
         fix_temperature: bool = False,
+        batch_size = 256,
     ):
         """
         Constructor for the SoftActorCriticGradientLoss class.
@@ -67,6 +68,8 @@ class SoftActorCriticGradientLoss(Loss):
         self.training_losses = []
         self.temperature_history = []
         self.iteration_counter = 0
+        self.batch_size = batch_size
+        self.error_predicted_reward = jnp.zeros((self.batch_size,))
 
     def _calculate_loss_validation(
         self,
@@ -201,17 +204,17 @@ class SoftActorCriticGradientLoss(Loss):
             action_sequence,
             jax.lax.stop_gradient(log_temp),
         )
-        self.error_predicted_reward = jnp.squeeze(
+        error_predicted_reward = jnp.squeeze(
             jnp.abs(critic_loss_per_sample) + jnp.abs(actor_loss_per_sample)
         )
         temperature_loss, temperature_grad = jax.value_and_grad(
             self._calculate_temperature_loss
         )(actor_network_params, log_probs)
 
-        mean_critic_grad, mean_actor_grad = self.mean_gradients(critic_grad, actor_grad)
-        logger.info(
-            f"mean actor grad = {mean_actor_grad}, mean critic grad = {mean_critic_grad}"
-        )
+        # mean_critic_grad, mean_actor_grad = self.mean_gradients(critic_grad, actor_grad)
+        # logger.info(
+        #     f"mean actor grad = {mean_actor_grad}, mean critic grad = {mean_critic_grad}"
+        # )
 
         assert actor_grad["temperature"] == 0
 
@@ -225,7 +228,7 @@ class SoftActorCriticGradientLoss(Loss):
         actor_network.update_model(temperature_grad) if not self.fix_temperature else None
 
         critic_network.polyak_averaging(self.polyak_averaging_tau)
-        return actor_loss, critic_loss, temperature_loss
+        return actor_loss, critic_loss, temperature_loss, error_predicted_reward
 
     def mean_gradients(self, critic_grad, actor_grad):
         """Calculates the mean gradients of the critic and actor networks.
@@ -515,22 +518,68 @@ class SoftActorCriticGradientLoss(Loss):
 
         if jnp.isnan(reward_data).any():
             raise ValueError("Nan in reward data")
-        actor_training_loss, critic_training_loss, temperature_trainig_loss= (
-            self._calculate_loss_apply_gradients(
-                critic_network_params=critic_network.critic_state.params,
-                critic_network=critic_network,
-                actor_network_params=actor_network.model_state.params,
-                actor_network=actor_network,
-                feature_data=feature_training,
-                next_feature_data=next_feature_training,
-                carry=carry_training,
-                next_carry=next_carry_training,
-                rewards=reward_training,
-                actions=action_training,
-                action_sequence=action_sequence_training,
+        actor_training_loss = 0.0
+        critic_training_loss = 0.0
+        temperature_training_loss = 0.0
+        if feature_training.shape[0] >self.batch_size:
+            num_batches = feature_training.shape[0] // self.batch_size
+
+            for batch_idx in range(num_batches + 1):
+                batch_start = batch_idx * self.batch_size
+                batch_end = batch_start + self.batch_size
+                batch_end = min(batch_end, feature_training.shape[0])
+                feature_batch = feature_training[batch_start:batch_end]
+                next_feature_batch = next_feature_training[batch_start:batch_end]
+                action_batch = action_training[batch_start:batch_end]
+                reward_batch = reward_training[batch_start:batch_end]
+                action_sequence_batch = action_sequence_training[batch_start:batch_end]
+                carry_batch = tuple(c[batch_start:batch_end] for c in carry_training)
+                next_carry_batch = tuple(c[batch_start:batch_end] for c in next_carry_training)
+
+                batched_actor_training_loss, batched_critic_training_loss, batched_temperature_trainig_loss, error_predicted_reward = (
+                self._calculate_loss_apply_gradients(
+                    critic_network_params=critic_network.critic_state.params,
+                    critic_network=critic_network,
+                    actor_network_params=actor_network.model_state.params,
+                    actor_network=actor_network,
+                    feature_data=feature_batch,
+                    next_feature_data=next_feature_batch,
+                    carry=carry_batch,
+                    next_carry=next_carry_batch,
+                    rewards=reward_batch,
+                    actions=action_batch,
+                    action_sequence=action_sequence_batch,
+                )
+                )
+                logger.info(f"batch {batch_idx} actor training loss = {batched_actor_training_loss}, critic training loss = {batched_critic_training_loss}, temperature training loss = {batched_temperature_trainig_loss}")
+                if self.error_predicted_reward.shape[0] < batch_end:
+                    padding_length = batch_end - self.error_predicted_reward.shape[0]
+                    self.error_predicted_reward = jnp.pad(
+                        self.error_predicted_reward, (0, padding_length), constant_values=0
+                    )
+                self.error_predicted_reward = self.error_predicted_reward.at[batch_start:batch_end].set(error_predicted_reward)
+                actor_training_loss += batched_actor_training_loss/num_batches
+                critic_training_loss += batched_critic_training_loss /num_batches
+                temperature_training_loss += batched_temperature_trainig_loss /num_batches
+            
+        else:
+            actor_training_loss, critic_training_loss, temperature_training_loss, self.error_predicted_reward = (
+                self._calculate_loss_apply_gradients(
+                    critic_network_params=critic_network.critic_state.params,
+                    critic_network=critic_network,
+                    actor_network_params=actor_network.model_state.params,
+                    actor_network=actor_network,
+                    feature_data=feature_training,
+                    next_feature_data=next_feature_training,
+                    carry=carry_training,
+                    next_carry=next_carry_training,
+                    rewards=reward_training,
+                    actions=action_training,
+                    action_sequence=action_sequence_training,
+                )
             )
-        )
-        
+
+            
         actor_validation_loss, critic_validation_loss, temperature_validation_loss = (
             self._calculate_loss_validation(
                 critic_network_params=critic_network.critic_state.params,
@@ -549,7 +598,7 @@ class SoftActorCriticGradientLoss(Loss):
         self.temperature_history.append(
             actor_network.get_exp_temperature())
         self.training_losses.append(
-            (actor_training_loss, critic_training_loss, temperature_trainig_loss)
+            (actor_training_loss, critic_training_loss, temperature_training_loss)
         )
         self.validation_losses.append(
             (actor_validation_loss, critic_validation_loss, temperature_validation_loss)
@@ -557,12 +606,12 @@ class SoftActorCriticGradientLoss(Loss):
 
         logger.info(f"{actor_network.get_exp_temperature()=}")
         logger.info(
-            f"training losses = (a,c,t){actor_training_loss, critic_training_loss, temperature_trainig_loss}"
+            f"training losses = (a,c,t){actor_training_loss, critic_training_loss, temperature_training_loss}"
         )
         logger.info(
             f"validation losses = (a,c,t){actor_validation_loss, critic_validation_loss, temperature_validation_loss}"
         )
-        if self.iteration_counter % 100 == 0:
+        if self.iteration_counter % 10 == 0:
             jnp.save(
                 "training_losses.npy",
                 jnp.array(self.training_losses),

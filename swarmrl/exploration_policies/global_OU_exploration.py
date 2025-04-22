@@ -17,7 +17,7 @@ class GlobalOUExploration(ExplorationPolicy, ABC):
     Perform exploration by random moves.
     """
 
-    def __init__(self, drift: float = 0.1, volatility: float = 0.1, long_term_mean: float = 0.0, action_dimension: int = 3):
+    def __init__(self, action_limits, drift: float = 0.1, volatility: float = 0.1, long_term_mean: float = 0.0, action_dimension: int = 3):
         """
         Constructor for the random exploration module.
 
@@ -36,6 +36,7 @@ class GlobalOUExploration(ExplorationPolicy, ABC):
         self.long_term_mean = long_term_mean
         self.action_dimension = action_dimension
         self.noise = np.zeros(action_dimension)
+        self.action_limits = action_limits
 
     @partial(jax.jit, static_argnums=(0,))
     def __call__(
@@ -58,9 +59,9 @@ class GlobalOUExploration(ExplorationPolicy, ABC):
         key = jax.random.PRNGKey(seed)
         value_range = np.max(model_actions, axis=-1) - np.min(model_actions, axis=-1)
 
-        self.noise = self.drift * (self.long_term_mean - self.noise) + self.volatility * value_range * jax.random.normal(key, shape=self.noise.shape)
+        self.noise += self.drift * (self.long_term_mean - self.noise) + self.volatility * value_range * jax.random.normal(key, shape=self.noise.shape)
         self.noise = self.noise.reshape(1, self.action_dimension)
         actions = model_actions + self.noise
-        actions = np.maximum(actions, np.array([0, 0, 0.1]))
-        actions = np.minimum(actions, np.array([100, 100, 10]))
+        # Clip the actions to be within the action limits
+        actions = np.clip(actions, self.action_limits[:,0], self.action_limits[:,1])
         return actions

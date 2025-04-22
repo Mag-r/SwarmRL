@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6340
+    labview_port = 6344
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  
@@ -134,16 +134,16 @@ class GauravExperiment(Engine):
         self.update_message(action_message)
 
     def clip_actions(
-        self, action: MPIAction, max_amplitude: float = 100, max_frequency: float = 100
+        self, action: MPIAction, max_amplitude: float = 70, max_frequency: float = 50
     ):
         """Clip the action values."""
         action.magnitude = np.clip(action.magnitude, -max_amplitude, max_amplitude)
-        action.frequency = np.clip(action.frequency, 0, max_frequency)
+        action.frequency = np.clip(action.frequency, 1, max_frequency + 1) - 1  # if freq is below 1 it is set to zero
         return action
 
     def seperate_rafts(self):
         seperation_action = MPIAction(
-            magnitude=[100, 100], frequency=[25, 36], keep_magnetic_field=10
+            magnitude=[100, 100], frequency=[20, 20], keep_magnetic_field=10
         )
         self.send_action(seperation_action)
         time.sleep(10)
@@ -158,6 +158,5 @@ class GauravExperiment(Engine):
                 magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=action[4], gradient=action[5:7]
             )
             self.send_action(action)
-            logger.info(f"Action sent: {action}")
             time.sleep(float(action.keep_magnetic_field) * 0.95)
             force_model.calc_reward(self.colloids)

@@ -129,7 +129,8 @@ class MPIActorCriticAgent(Agent):
         #     )
 
         # self.trajectory = GlobalTrajectoryInformation()
-
+        self.actor_network.split_rng_key()
+        self.critic_network.split_rng_key()
         return rewards, killed
 
     def reset_agent(self, colloids: typing.List[Colloid]):

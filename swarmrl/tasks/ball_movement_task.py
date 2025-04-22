@@ -10,8 +10,9 @@ class ExperimentBallMovingTask(Task):
 
     def __init__(self):
         super().__init__(particle_type=0)
-        self.power = 1.5
+        self.power = 2
         self.normalization = jnp.linalg.norm(np.array([253/2, 253/2]), self.power)
+        self.old_distance = 0
 
 
     def distance_reward(self, position_ball: np.ndarray) -> float:
@@ -21,5 +22,11 @@ class ExperimentBallMovingTask(Task):
     def __call__(self, positions: np.ndarray) -> float:
         position_ball = positions[:, -1, :]
         position_ball = jnp.squeeze(position_ball)
-        reward = -self.distance_reward(position_ball)/self.normalization
+        distance_reward = np.mean(self.distance_reward(position_ball))/self.normalization
+        if self.old_distance == 0:
+            self.old_distance = distance_reward
+            return 0.0
+        reward = self.old_distance - distance_reward
+        self.old_distance = distance_reward
+        reward = - distance_reward
         return reward

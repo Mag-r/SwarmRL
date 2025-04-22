@@ -111,7 +111,7 @@ class GlobalContinuousTrainer(Trainer):
         # mp.set_start_method('spawn', force=True)
 
         force_fn = self.initialize_training()
-
+        self.engine.seperate_rafts()
         # Initialize the tasks and observables.
         for agent in self.agents.values():
             agent.reset_agent(self.engine.colloids)
@@ -168,7 +168,10 @@ class GlobalContinuousTrainer(Trainer):
                             current_reward=np.round(current_reward, 2),
                             running_reward=np.round(np.mean(rewards[-10:]), 2),
                         )
-                        if episode % 10 == 0:
+                        
+                    else:
+                        logger.info("Sampling is faster than learning.")
+                    if episode % 10 == 0 and episode > 0:
                             # Save the agents every 10 episodes.
                             logger.info(
                                 "Trying to seperate the rafts and save the agents."
@@ -182,8 +185,6 @@ class GlobalContinuousTrainer(Trainer):
                                     agent.save_agent(
                                         identifier=agent.task.__class__.__name__
                                     )
-                    else:
-                        logger.info("Sampling is faster than learning.")
             finally:
                 self.engine.finalize()
                 self.sampling_finished = True

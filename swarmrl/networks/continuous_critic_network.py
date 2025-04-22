@@ -182,6 +182,9 @@ class ContinuousCriticModel(Network, ABC):
         _, subkey = jax.random.split(init_rng)
         self.critic_state, self.target_state = self._create_train_state(subkey)
 
+
+    def split_rng_key(self):
+        self.dropout_key, _ = jax.random.split(self.dropout_key)
     def update_model(self, grads, updated_batch_stats):
         """
         Train the model.

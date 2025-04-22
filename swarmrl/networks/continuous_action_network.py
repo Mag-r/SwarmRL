@@ -321,7 +321,7 @@ class ContinuousActionModel(Network, ABC):
         action, _ = self.sampling_strategy(
             logits[np.newaxis, :], subkey=sampling_subkey, calculate_log_probs=False, deployment_mode=self.deployment_mode
         )
-        # action = self.exploration_policy(action)
+        action = self.exploration_policy(action)
         return action
 
     def export_model(self, filename: str = "model", directory: str = "Models"):
