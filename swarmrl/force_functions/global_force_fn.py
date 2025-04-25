@@ -84,6 +84,17 @@ class GlobalForceFunction:
         self.kill_switch = any(switches)
         return action
 
+    def set_training_mode(self, training: bool = True):
+        """
+        Set the training mode for the agents.
+
+        Parameters
+        ----------
+        training : bool
+                If true, set the training mode.
+        """
+        for agent in self.agents:
+            self.agents[agent].train = training
 
     def save_agents(self, directory: str = "Models"):
         """

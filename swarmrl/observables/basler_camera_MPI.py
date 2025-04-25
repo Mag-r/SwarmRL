@@ -39,7 +39,7 @@ class BaslerCameraObservable(Observable, ABC):
         "topicName": "/image",
         "fps": 10,
         "exposureTime": 5000,
-        "width": 2048,
+        "width": 2592,
         "height": 2048,
         "xOffset": 0,
         "yOffset": 0,
@@ -72,7 +72,7 @@ class BaslerCameraObservable(Observable, ABC):
         tlf = pylon.TlFactory.GetInstance()
         detected_cameras = tlf.EnumerateDevices()
         self.camera = None
-        self.image_count = 0
+        self.image_count = 470
         for cam in detected_cameras:
             serial_number = cam.GetFriendlyName().split()[-1][1:-1]
             if serial_number == self.camParam["camName"]:
@@ -86,7 +86,7 @@ class BaslerCameraObservable(Observable, ABC):
         # if os.path.exists("images"):
         #     shutil.rmtree("images")
         # os.makedirs("images")
-        self.image_queue = queue.Queue()
+        self.image_queue = queue.LifoQueue()
         self.image_saving_thread = threading.Thread(
             target=self.save_images_async, daemon=True
         )
@@ -106,9 +106,11 @@ class BaslerCameraObservable(Observable, ABC):
         """
         blob_detection_params = cv2.SimpleBlobDetector_Params()
         blob_detection_params.filterByArea = True
-        blob_detection_params.maxArea = 300
-        blob_detection_params.minArea = 50
-        blob_detection_params.filterByCircularity = False
+        blob_detection_params.maxArea = 50
+        blob_detection_params.minArea = 10
+        blob_detection_params.filterByCircularity = True
+        blob_detection_params.minCircularity = 0.5
+        blob_detection_params.maxCircularity = 1.0
         blob_detection_params.filterByConvexity = False
         blob_detection_params.filterByInertia = False
         blob_detection_params.filterByColor = True
@@ -183,7 +185,6 @@ class BaslerCameraObservable(Observable, ABC):
                 image = grabResult.GetArray()
                 if not self.camParam["colored"]:
                     image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-                image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
 
                 grabResult.Release()
             else:
@@ -194,10 +195,8 @@ class BaslerCameraObservable(Observable, ABC):
                 f"Image queue is starting to fill. Current size {self.image_queue.qsize()}"
             )
         self.image_queue.put(image.copy())
+        image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
         self.track_blue_ball(image)
-        # remove ball from the image
-        mask = (image[:, :, 2] > image[:, :, 1]) & (image[:, :, 2] > image[:, :, 0])
-        image[mask] = 0
         positions = self.extract_positions(image)
         if positions.shape[1] < self.number_particles:
             padding = self.number_particles - positions.shape[1]
@@ -206,15 +205,13 @@ class BaslerCameraObservable(Observable, ABC):
         elif positions.shape[1] > self.number_particles:
             positions = positions[:, : self.number_particles, :]
 
-        positions = np.concatenate((positions, self.target), axis=1)
         positions = np.concatenate((positions, self.blue_ball_velocity), axis=1)
         positions = np.concatenate((positions, self.blue_ball_position), axis=1)
         return positions
 
     def track_blue_ball(self, image: onp.ndarray):
-        thresholded_image = (image[:,:,2]>90) & (image[:,:,0]<image[:,:,2]) #& (image[:,:,0]<image[:,:,2])
+        thresholded_image = (image[:,:,2]>120) & (image[:,:,2]-image[:,:,0]>60) & (image[:,:,2]-image[:,:,1]>60) & (image[:,:,0]<180)
         keypoints = self.blob_detector.detect(thresholded_image.astype(onp.uint8) * 255)
-        keypoints = [kp for kp in keypoints if kp.size > 20]
 
         if len(keypoints) == 1:
             self.blue_ball_velocity = self.blue_ball_position - np.array(keypoints[0].pt).reshape(1, 1, 2)
@@ -226,57 +223,29 @@ class BaslerCameraObservable(Observable, ABC):
         """
         Extracts the positions of the colloids from the image.
         """
-        image = cv2.resize(original_image, (self.resolution[0], self.resolution[1]))
+        image = original_image.copy()
+        mask = (image[:, :, 2] > image[:, :, 1]) & (image[:, :, 2] > image[:, :, 0])
+        image[mask] = 0
+        image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
         image = np.array(image, dtype=np.float32)
         image = (image - np.mean(image)) / np.std(image)
         image = np.reshape(image, (1, self.resolution[0], self.resolution[1], 3))
         cleaned_image = self.model_state.apply_fn(self.model_state.params, image)
-        # contours = self.threshold_and_extract_contours(cleaned_image)
         positions = self.peak_detection(cleaned_image)
-        # contour_image = onp.array(original_image, dtype=np.uint8)
-        # Ensure blue_ball_position is properly formatted
-        # cv2.drawContours(contour_image, contours, -1, (255, 255, 0), 2)
-        # attempts = 0
-        # while len(positions) != self.number_particles and attempts < 10:
-        #     self.threshold = (
-        #         self.threshold + (len(positions) - self.number_particles) * 0.002
-        #     )
-        #     self.threshold = onp.clip(self.threshold, 0.2, 0.99)
-        #     logger.info(
-        #         f"Detected {len(positions)} of {self.number_particles}. Threshold changed to {self.threshold}, in attempt {attempts}."
-        #     )
-        #     positions = self.peak_detection(cleaned_image)
-        #     attempts = attempts + 1
-        
-        # for position in positions:
-        #     center = tuple([position[1], position[0]])
-        #     cv2.circle(contour_image, center, 2, (255, 0, 0), -1)
-        # center = tuple(self.blue_ball_position[0, 0].astype(int).tolist())
-        # cv2.circle(contour_image, center, 4, (0, 0, 255), -1)
-        # self.image_queue.put(contour_image)
+        contour_image = onp.array(original_image, dtype=np.uint8)
+        for position in positions:
+            center = tuple([position[1], position[0]])
+            cv2.circle(contour_image, center, 2, (255, 0, 0), -1)
+        center = tuple(self.blue_ball_position[0, 0].astype(int).tolist())
+        cv2.circle(contour_image, center, 4, (0, 0, 255), -1)
+        self.image_queue.put(contour_image)
 
-        # positions = np.array([cv2.boundingRect(contour) for contour in contours])
-        # positions = positions[:, :2] + positions[:, 2:] / 2
         if len(positions) != self.number_particles:
             logger.warning(
                 f"Number of particles detected {len(positions)} is not equal to the expected number of particles {self.number_particles}."
             )
 
         return positions.reshape(1, -1, 2)
-
-    def threshold_and_extract_contours(self, cleaned_image):
-        processed_image = cleaned_image > self.threshold
-        processed_image = np.squeeze(processed_image)
-        processed_image = onp.array(processed_image * 255, dtype=onp.uint8)
-
-        contours, _ = cv2.findContours(
-            processed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-        min_length = 1
-        contours = [
-            contour for contour in contours if cv2.arcLength(contour, True) > min_length
-        ]
-        return contours
 
     def peak_detection(self, cleaned_image):
         """

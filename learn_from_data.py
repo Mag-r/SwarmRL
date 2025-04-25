@@ -25,6 +25,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 action_dimension = 7
 
+
 class ActorNet(nn.Module):
     """A simple dense model.
     (batch,time,features)
@@ -51,13 +52,25 @@ class ActorNet(nn.Module):
         x = x.reshape((batch_size, sequence_length, -1))
         x = x/253
         x = x.at[:, :, :-2].set(x[:, :, :-2] - jnp.expand_dims(x[:, :, -1], axis=-1))
+        
+        x = nn.Dense(features=256)(x)
+        x = nn.sigmoid(x)
+        x = nn.BatchNorm(use_running_average=not train)(x)
+        x = nn.Dense(features=128)(x)
+        x = nn.sigmoid(x)
+        x = nn.BatchNorm(use_running_average=not train)(x)
         if carry is None:
             carry = self.lstm.initialize_carry(
                 jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
             )
+        x = nn.SelfAttention(num_heads=16)(x)
         x = x.reshape((batch_size, -1))
-        x = nn.Dense(features=12)(x)
-        x = nn.relu(x)
+        x = nn.Dense(features=128)(x)
+        x = nn.Dropout(rate=0.2)(x, deterministic=not train)
+        x = nn.sigmoid(x)
+        x = nn.BatchNorm(use_running_average=not train)(x)
+        x = nn.Dense(features=64)(x)
+        x = nn.sigmoid(x)
         x = nn.BatchNorm(use_running_average=not train)(x)
         x = nn.Dense(features=action_dimension*2)(x)
         return x, carry
@@ -81,6 +94,13 @@ class CriticNet(nn.Module):
         x = x.reshape((batch_size,sequence_length, -1))
         x = x/253 
         x = x.at[:, :, :-2].set(x[:, :, :-2] - jnp.expand_dims(x[:, :, -1], axis=-1))
+        
+        x = nn.Dense(features=256)(x)
+        x = nn.sigmoid(x)
+        x = nn.BatchNorm(use_running_average=not train)(x)
+        x = nn.Dense(features=128)(x)
+        x = nn.sigmoid(x)
+        x = nn.BatchNorm(use_running_average=not train)(x)
         if carry is None:
             carry = self.lstm.initialize_carry(
                 jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
@@ -88,29 +108,24 @@ class CriticNet(nn.Module):
         # carry, x = self.lstm(carry, x)
         # x = nn.sigmoid(x)
         # x = nn.BatchNorm(use_running_average=not train)(x)
-        x = nn.SelfAttention(num_heads=11)(x)
-        x = nn.relu(x)
+        x = nn.SelfAttention(num_heads=16)(x)
+        x = nn.sigmoid(x)
         x = nn.BatchNorm(use_running_average=not train)(x)
         x = x.reshape((batch_size, -1))
         x = jnp.concatenate([x, action], axis=-1)
-        q_1 = nn.Dense(features=32, name="Critic_1_1")(x)
-        q_2 = nn.Dense(features=32, name="Critic_2_1")(x)
-        q_1 = nn.relu(q_1)
-        q_2 = nn.relu(q_2)
-        q_1 = nn.Dropout(rate=0.3)(q_1, deterministic=not train)
-        q_2 = nn.Dropout(rate=0.4)(q_2, deterministic=not train)
+        q_1 = nn.Dense(features=128, name="Critic_1_1")(x)
+        q_2 = nn.Dense(features=128, name="Critic_2_1")(x)
+        q_1 = nn.Dropout(rate=0.2)(q_1, deterministic=not train)
+        q_2 = nn.Dropout(rate=0.1)(q_2, deterministic=not train)
+        q_1 = nn.sigmoid(q_1)
+        q_2 = nn.sigmoid(q_2)
         q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
         q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
-        q_1 = nn.Dense(features=24, name="Critic_1_2")(q_1)
-        q_2 = nn.Dense(features=24, name="Critic_2_2")(q_2)
-        q_1 = nn.relu(q_1)
-        q_2 = nn.relu(q_2)
-        q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
-        q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
-        q_1 = nn.Dense(features=24, name="Critic_1_3")(q_1)
-        q_2 = nn.Dense(features=24, name="Critic_2_3")(q_2)
-        q_1 = nn.relu(q_1)
-        q_2 = nn.relu(q_2)
+        
+        q_1 = nn.Dense(features=64, name="Critic_1_2")(q_1)
+        q_2 = nn.Dense(features=64, name="Critic_2_2")(q_2)
+        q_1 = nn.sigmoid(q_1)
+        q_2 = nn.sigmoid(q_2)
         q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
         q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
         q_1 = nn.Dense(features=1)(x)
@@ -120,7 +135,7 @@ class CriticNet(nn.Module):
 sequence_length = 2
 resolution = 253
 number_particles = 30
-learning_rate = 3e-3
+learning_rate = 1e-3
 
 obs = srl.observables.Observable(0)
 task = srl.tasks.ExperimentBallMovingTask()
@@ -179,6 +194,7 @@ loss = srl.losses.SoftActorCriticGradientLoss(
     polyak_averaging_tau=0.005,
     validation_split=0.1,
     fix_temperature=False,
+    batch_size=64,
 )
 
 protocol = srl.agents.MPIActorCriticAgent(
@@ -196,7 +212,7 @@ engine = OfflineLearning()
 
 
 
-protocol.restore_agent(identifier=task.__class__.__name__)
+# protocol.restore_agent(identifier=task.__class__.__name__)
 protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_11")
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)

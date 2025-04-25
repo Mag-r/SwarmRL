@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6344
+    labview_port = 6340
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  
@@ -134,7 +134,7 @@ class GauravExperiment(Engine):
         self.update_message(action_message)
 
     def clip_actions(
-        self, action: MPIAction, max_amplitude: float = 70, max_frequency: float = 50
+        self, action: MPIAction, max_amplitude: float = 100, max_frequency: float = 30
     ):
         """Clip the action values."""
         action.magnitude = np.clip(action.magnitude, -max_amplitude, max_amplitude)
@@ -153,10 +153,21 @@ class GauravExperiment(Engine):
         """Perform a real-experiment equivalent of an integration step."""
 
         for _ in range(n_slices):
+            force_model.set_training_mode(True)
             action = force_model.calc_action(None)
             action = MPIAction(
-                magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=action[4], gradient=action[5:7]
+                magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=0.5, gradient=action[4:6]
             )
             self.send_action(action)
             time.sleep(float(action.keep_magnetic_field) * 0.95)
+            
+            force_model.set_training_mode(False)
+            for _ in range(3):
+                action = force_model.calc_action(None)
+                action = MPIAction(
+                    magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=0.5, gradient=action[4:6]
+                )
+                self.send_action(action)
+                time.sleep(float(action.keep_magnetic_field) * 0.95)
+            force_model.set_training_mode(True)
             force_model.calc_reward(self.colloids)

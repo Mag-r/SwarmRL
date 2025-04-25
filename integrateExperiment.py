@@ -15,6 +15,7 @@ from swarmrl.trainers.global_continuous_trainer import (
     GlobalContinuousTrainer as Trainer,
 )
 from swarmrl.tasks.ball_movement_task import ExperimentBallMovingTask
+from swarmrl.tasks.ball_race_task import BallRacingTask
 from swarmrl.engine.gaurav_experiment import GauravExperiment
 from threading import Lock
 
@@ -57,12 +58,12 @@ number_particles = 30
 learning_rate = 3e-3
 
 obs = BaslerCameraObservable(
-    [resolution, resolution], Autoencoder(), model_path="Models/autoencoder_4_10.pkl", number_particles=number_particles
+    [resolution, resolution], Autoencoder(), model_path="Models/autoencoder_4_25.pkl", number_particles=number_particles
 )
 # task = ExperimentTask(number_particles=number_particles)
 # task = ExperimentHexagonTask(number_particles=number_particles)
-task = ExperimentBallMovingTask()
-
+# task = ExperimentBallMovingTask()
+task = BallRacingTask()
 ureg = pint.UnitRegistry()
 Q_ = ureg.Quantity
 
@@ -102,4 +103,4 @@ protocol.restore_agent(identifier=task.__class__.__name__)
 protocol.actor_network.set_temperature(0.2)
 rl_trainer = Trainer([protocol], lock=lock, deployment_mode=learning_rate == 0.0)
 print("start training", flush=True)
-reward = rl_trainer.perform_rl_training(experiment, 1000, 20)
+reward = rl_trainer.perform_rl_training(experiment, 1000, 10)

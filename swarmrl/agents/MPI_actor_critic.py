@@ -447,9 +447,9 @@ class MPIActorCriticAgent(Agent):
             self.trajectory.features = latest_observable
         else:
             with self.lock:
-                self.trajectory.features = np.append(
-                    self.trajectory.features, latest_observable, axis=1
-                )
+                    self.trajectory.features = np.append(
+                        self.trajectory.features, latest_observable, axis=1
+                    )
 
         if self.trajectory.features.shape[1] >= self.actor_network.sequence_length:
             state_description = self.trajectory.features[
