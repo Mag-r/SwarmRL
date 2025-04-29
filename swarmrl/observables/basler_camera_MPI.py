@@ -40,9 +40,9 @@ class BaslerCameraObservable(Observable, ABC):
         "fps": 10,
         "exposureTime": 5000,
         "width": 2592,
-        "height": 2048,
+        "height": 1500,
         "xOffset": 0,
-        "yOffset": 0,
+        "yOffset": 548,
         "xReverse": False,
         "yReverse": False,
         "scale": 0.5,
@@ -86,7 +86,7 @@ class BaslerCameraObservable(Observable, ABC):
         # if os.path.exists("images"):
         #     shutil.rmtree("images")
         # os.makedirs("images")
-        self.image_queue = queue.LifoQueue()
+        self.image_queue = queue.Queue()
         self.image_saving_thread = threading.Thread(
             target=self.save_images_async, daemon=True
         )
@@ -194,7 +194,7 @@ class BaslerCameraObservable(Observable, ABC):
             logger.warning(
                 f"Image queue is starting to fill. Current size {self.image_queue.qsize()}"
             )
-        self.image_queue.put(image.copy())
+        self.image_queue.put(cv2.resize(image, (506, 506)))
         image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
         self.track_blue_ball(image)
         positions = self.extract_positions(image)

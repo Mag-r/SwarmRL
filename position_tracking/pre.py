@@ -86,23 +86,31 @@ def label_images():
     detected_images = []
     detected_centers = []
 
-    for i in tqdm(range(155)):
+    for i in tqdm(range(9523)):
         try:
             image = cv.imread(f'../images/camera_image_{i:04d}.png')
             
             image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
             image =cv.resize(image, (506,506))
+            original_image = image.copy()
             mask = (image[:, :, 2] > image[:, :, 1]) & (image[:, :, 2] > image[:, :, 0])
             image[mask] = 0
+            image[230:310, 140:360,:] = 0
+            non_green_mask= (image[:, :, 1] < 120)
+            image[non_green_mask] = 0
+
             gray_image = cv.cvtColor(image, cv.COLOR_RGB2GRAY)
-            centers, radii, count = find_circles_adaptive(gray_image, 7, [3, 15], top_left_x=160, top_left_y=160, width_x=200, height_y=200, adaptive_thres_blocksize=7, adaptive_thres_const=-10, raft_center_threshold=80, min_sep_dist=11)
-            if count == 7:
-                detected_images.append(gray_image)
+            centers, radii, count = find_circles_adaptive(gray_image, 30, [3, 15], top_left_x=0, top_left_y=100, width_x=500, height_y=300, adaptive_thres_blocksize=3, adaptive_thres_const=-0.4, raft_center_threshold=60, min_sep_dist=8)
+            if count == 30:
+                detected_images.append(original_image)
                 detected_centers.append(centers)
             else:
                 print(f"detected {count} particles in image:{i}")
-        except:
-            print(f"Failed to read image {i}")
+        except Exception as e:
+            if isinstance(e, KeyboardInterrupt):
+                raise 
+            print(f"Failed to read image {i}: {e}")
+            
     detected_centers = np.array(detected_centers)
     detected_images = np.array(detected_images)
 

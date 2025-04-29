@@ -2,6 +2,7 @@ import logging
 
 import jax
 import jax.numpy as jnp
+import numpy as onp
 from flax.core.frozen_dict import FrozenDict
 from functools import partial
 from threading import Lock
@@ -438,7 +439,7 @@ class SoftActorCriticGradientLoss(Loss):
         """
         n_samples = data.shape[0]
         split_index = int(n_samples * (1-self.validation_split))
-        
+        split_index = onp.clip(split_index, n_samples-20, n_samples-2)
         return data[:split_index], data[split_index:]
 
     def compute_loss(

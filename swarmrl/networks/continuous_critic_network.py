@@ -68,6 +68,8 @@ class ContinuousCriticModel(Network, ABC):
         """
         if rng_key is None:
             rng_key = onp.random.randint(0, 1027465782564)
+            rng_key = jax.random.PRNGKey(rng_key)
+
         self.critic_network = critic_model
         self.target_network = critic_model.copy()
 
@@ -81,8 +83,7 @@ class ContinuousCriticModel(Network, ABC):
         self.action_dimension = action_dimension
         self.sequence_length = self.input_shape[1]
 
-        init_rng = jax.random.PRNGKey(rng_key)
-        params_init_rng, self.dropout_key = jax.random.split(init_rng)
+        params_init_rng, self.dropout_key = jax.random.split(rng_key)
         self.optimizer = optimizer
         self.critic_state, self.target_state = self._create_train_state(params_init_rng)
         self.deployment_mode = deployment_mode
@@ -185,6 +186,8 @@ class ContinuousCriticModel(Network, ABC):
 
     def split_rng_key(self):
         self.dropout_key, _ = jax.random.split(self.dropout_key)
+        
+        
     def update_model(self, grads, updated_batch_stats):
         """
         Train the model.

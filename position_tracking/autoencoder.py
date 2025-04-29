@@ -18,39 +18,40 @@ logging.basicConfig(
     level=logging.INFO,
 )
 # Load data
-scale=2
-input_data = np.load("detected_images.npy")[:,::scale,::scale]
-print(input_data.shape)
+scale=1
+def load_and_split_data(scale, start_index=0, batch_size=200):
+    input_data = np.load("detected_images.npy")[start_index:start_index+batch_size,::scale,::scale]
+    print(input_data.shape)
 
-ground_truth_positions = np.load("detected_centers.npy")
+    ground_truth_positions = np.load("detected_centers.npy")[start_index:start_index+batch_size]
 
-# Split data into training and validation sets
-validation_input_data = input_data[-10:]
-validation_ground_truth_positions = ground_truth_positions[-10:]
-input_data = input_data[:-10]
-ground_truth_positions = ground_truth_positions[:-10]
-# input_data = (input_data > 1.9).astype(float)
-# validation_input_data = (validation_input_data > 1.9).astype(float)
+    validation_input_data = input_data[-10:]
+    validation_ground_truth_positions = ground_truth_positions[-10:]
+    input_data = input_data[:-10]
+    ground_truth_positions = ground_truth_positions[:-10]
 
-
-# Function to convert positions to binary images with larger circles
-def positions_to_binary_image(positions, img_size=(int(506/scale), int(506/scale)), radius=1):
-    images = np.zeros((len(positions), *img_size, 1), dtype=np.float32)
-    for i, pos_list in enumerate(positions):
-        for x, y in pos_list:  # Assuming each entry is a list of (x, y) tuples
-            cv2.circle(images[i, :, :, 0], (int(x / scale), int(y / scale)), radius, 1.0, -1)
-    return images
+    def positions_to_binary_image(positions, img_size=(int(506/scale), int(506/scale)), radius=1):
+        images = np.zeros((len(positions), *img_size, 1), dtype=np.float32)
+        for i, pos_list in enumerate(positions):
+            for x, y in pos_list:  # Assuming each entry is a list of (x, y) tuples
+                cv2.circle(images[i, :, :, 0], (int(x / scale), int(y / scale)), radius, 1.0, -1)
+        return images
 
 
 # Convert ground truth positions to binary target images
-ground_truth_images = positions_to_binary_image(ground_truth_positions)
-validation_ground_truth_images = positions_to_binary_image(
+    ground_truth_images = positions_to_binary_image(ground_truth_positions)
+    validation_ground_truth_images = positions_to_binary_image(
     validation_ground_truth_positions
 )
+    
+    return input_data,validation_input_data,ground_truth_images,validation_ground_truth_images
+
+
 
 
 # Convolutional Autoencoder Definition
 class Autoencoder(nn.Module):
+    @nn.remat
     @nn.compact
     def __call__(self, x):
         # Encoder
@@ -100,22 +101,25 @@ def create_train_state(rng, model):
     params = model.init(rng, dummy_input)
     model_summary = model.tabulate(rng, dummy_input)
     print(model_summary)
-    lr_schedule = optax .schedules.exponential_decay(1e-4, 30, 0.99)
+    lr_schedule = optax .schedules.exponential_decay(1e-3, 100, 0.9)
     optimizer = optax.inject_hyperparams(optax.adam)(learning_rate=lr_schedule)
     return train_state.TrainState.create(
         apply_fn=model.apply, params=params, tx=optimizer
     )
 
 
+_, validation_input_data, _, validation_ground_truth_images = load_and_split_data(scale, start_index=0, batch_size=100)
 example_image = validation_input_data[0]
 
-# Training loop
+# Modify data loading to process 200 images at a time
+batch_size = 50
+
 rng = jax.random.PRNGKey(0)
 model = Autoencoder()
 state = create_train_state(rng, model)
 
-weight = np.ones_like(ground_truth_images[0])
-weight[50:150, 50:150] = 5 # Adjust this weight based on imbalance
+weight = np.ones_like(validation_ground_truth_images[0])
+weight = 10 # Adjust this weight based on imbalance
 
 def save_model(state, path):
     with open(path, "wb") as f:
@@ -126,18 +130,18 @@ def load_model(path):
         logger.info(f"Loading model from {path}")
         return pickle.load(f)
 
-loaded_params = load_model("autoencoder_model/model_100.pkl")
+loaded_params = load_model("autoencoder_model/model_200.pkl")
 state = state.replace(params=loaded_params)
 training_losses = []
 validation_losses = []
 try:
     for epoch in range(10000):
         losses = 0
-        for batch, target in zip(
-            np.array_split(input_data, 20), np.array_split(ground_truth_images, 20)
-        ):
-            state, loss = train_step(state, batch, target, weight)
-            losses += loss
+        for start_idx in range(0, 4424, batch_size):
+            batch,_,target,_ = load_and_split_data(scale, start_index=start_idx, batch_size=batch_size)
+            for _ in range(5):  # Perform 5 training steps per batch
+                state, loss = train_step(state, batch, target, weight)
+                losses += loss
         logger.info(f"Epoch {epoch+1}, Loss: {losses:.6f}")
         if np.isnan(loss):
             raise ValueError("Loss is NaN. Reduce learning rate.")
@@ -156,14 +160,14 @@ try:
         plt.legend()
         plt.savefig("autoencoder_model/losses.png")
         plt.close()
-        if epoch % 100 == 0:
-            
+        if epoch % 10 == 0:
             logger.info(f"Validation Loss: {validation_loss:.6f}")
             example_output = state.apply_fn(state.params, example_image[None, ...])
+            print(np.max(example_output))
             fig, ax = plt.subplots(1, 3)
             ax[0].imshow((example_image-np.min(example_image)) / (np.max(example_image)-np.min(example_image)))
-            ax[1].imshow(validation_ground_truth_images[0, :, :, 0], cmap="gray")
-            ax[2].imshow(example_output[0, :, :, 0], cmap="gray")
+            ax[1].imshow(validation_ground_truth_images[0, :, :, 0], cmap="hot")
+            ax[2].imshow(example_output[0, :, :, 0], cmap="hot")
             plt.savefig(f"autoencoder_model/output_{epoch}.png")
             plt.close()
             save_model(state, f"autoencoder_model/model_{epoch}.pkl")

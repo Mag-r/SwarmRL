@@ -70,6 +70,7 @@ class ContinuousActionModel(Network, ABC):
         """
         if rng_key is None:
             rng_key = onp.random.randint(0, 1027465782564)
+            rng_key = jax.random.PRNGKey(rng_key)
         self.sampling_strategy = sampling_strategy
         self.model = flax_model
 
@@ -82,9 +83,8 @@ class ContinuousActionModel(Network, ABC):
         self.sequence_length = self.input_shape[1]
         self.carry = None
         # initialize the model state
-        init_rng = jax.random.PRNGKey(rng_key)
         self.rng_key_sampling_strategy, params_init_rng, self.dropout_key = (
-            jax.random.split(init_rng, num=3)
+            jax.random.split(rng_key, num=3)
         )
         self.optimizer = optimizer
         self.model_state = self._create_train_state(params_init_rng)
@@ -321,7 +321,7 @@ class ContinuousActionModel(Network, ABC):
         action, _ = self.sampling_strategy(
             logits[np.newaxis, :], subkey=sampling_subkey, calculate_log_probs=False, deployment_mode=self.deployment_mode
         )
-        action = self.exploration_policy(action)
+        action = self.exploration_policy(action, jax.random.split(sampling_subkey)[0])
         return action
 
     def export_model(self, filename: str = "model", directory: str = "Models"):
