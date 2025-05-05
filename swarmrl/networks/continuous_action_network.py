@@ -314,10 +314,10 @@ class ContinuousActionModel(Network, ABC):
         self.carry = tuple(np.expand_dims(self.carry, axis=1))
         logits = logits.squeeze()
         
-        logger.info(
-            f"covariance {np.exp(logits[self.action_dimension:]) * (self.sampling_strategy.action_limits[:,1] - self.sampling_strategy.action_limits[:,0])}"
-        )
-        logger.info(f"mean {logits[:self.action_dimension]}")
+        # logger.info(
+        #     f"covariance {np.exp(logits[self.action_dimension:]) * (self.sampling_strategy.action_limits[:,1] - self.sampling_strategy.action_limits[:,0])}"
+        # )
+        # logger.info(f"mean {logits[:self.action_dimension]}")
         action, _ = self.sampling_strategy(
             logits[np.newaxis, :], subkey=sampling_subkey, calculate_log_probs=False, deployment_mode=self.deployment_mode
         )

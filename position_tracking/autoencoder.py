@@ -21,8 +21,6 @@ logging.basicConfig(
 scale=1
 def load_and_split_data(scale, start_index=0, batch_size=200):
     input_data = np.load("detected_images.npy")[start_index:start_index+batch_size,::scale,::scale]
-    print(input_data.shape)
-
     ground_truth_positions = np.load("detected_centers.npy")[start_index:start_index+batch_size]
 
     validation_input_data = input_data[-10:]
@@ -130,7 +128,7 @@ def load_model(path):
         logger.info(f"Loading model from {path}")
         return pickle.load(f)
 
-loaded_params = load_model("autoencoder_model/model_200.pkl")
+loaded_params = load_model("autoencoder_model/model_260.pkl")
 state = state.replace(params=loaded_params)
 training_losses = []
 validation_losses = []
@@ -139,7 +137,7 @@ try:
         losses = 0
         for start_idx in range(0, 4424, batch_size):
             batch,_,target,_ = load_and_split_data(scale, start_index=start_idx, batch_size=batch_size)
-            for _ in range(5):  # Perform 5 training steps per batch
+            for _ in range(1):  # Perform 5 training steps per batch
                 state, loss = train_step(state, batch, target, weight)
                 losses += loss
         logger.info(f"Epoch {epoch+1}, Loss: {losses:.6f}")

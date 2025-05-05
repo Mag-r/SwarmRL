@@ -56,7 +56,7 @@ class GlobalOUExploration(ExplorationPolicy, ABC):
         self.noise = self.noise.reshape(1, self.action_dimension)
 
         actions = model_actions + self.noise
-        logger.info(f"noise: {self.noise}")
+        # logger.info(f"noise: {self.noise}")
 
         actions = np.clip(actions, self.action_limits[:, 0], self.action_limits[:, 1])
         return actions

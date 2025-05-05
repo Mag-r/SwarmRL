@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6342
+    labview_port = 6340
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  
@@ -134,7 +134,7 @@ class GauravExperiment(Engine):
         self.update_message(action_message)
 
     def clip_actions(
-        self, action: MPIAction, max_amplitude: float = 100, max_frequency: float = 40
+        self, action: MPIAction, max_amplitude: float = 90, max_frequency: float = 40
     ):
         """Clip the action values."""
         action.magnitude = np.clip(action.magnitude, -max_amplitude, max_amplitude)
@@ -143,7 +143,7 @@ class GauravExperiment(Engine):
 
     def seperate_rafts(self):
         seperation_action = MPIAction(
-            magnitude=[100, 100], frequency=[20, 20], keep_magnetic_field=10
+            magnitude=[100, 100], frequency=[30, 30], keep_magnetic_field=10
         )
         self.send_action(seperation_action)
         time.sleep(10)

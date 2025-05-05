@@ -250,7 +250,6 @@ class SoftActorCriticGradientLoss(Loss):
         return mean_critic_grad, mean_actor_grad
 
     @partial(jax.jit, static_argnames=["self", "critic_network", "actor_network"])
-    @partial(jax.jit, static_argnames=["self", "critic_network", "actor_network"])
     def _calculate_actor_loss(
         self,
         actor_network_params: FrozenDict,
@@ -439,7 +438,7 @@ class SoftActorCriticGradientLoss(Loss):
         """
         n_samples = data.shape[0]
         split_index = int(n_samples * (1-self.validation_split))
-        split_index = onp.clip(split_index, n_samples-20, n_samples-2)
+        split_index = onp.clip(split_index, n_samples-5, n_samples-2)
         return data[:split_index], data[split_index:]
 
     def compute_loss(

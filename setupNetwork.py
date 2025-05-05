@@ -134,7 +134,7 @@ def defineRLAgent(
     
 
     # Define a sampling_strategy
-    action_limits = jnp.array([[0,100],[0,100],[0,40], [0,40], [-0.8, 0.8], [-0.5, 0.5]])
+    action_limits = jnp.array([[0,90],[0,90],[0,40], [0,40], [-0.8, 0.8], [-0.5, 0.5]])
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
     exploration_policy = srl.exploration_policies.GlobalOUExploration(
         drift=0.04, volatility=0.03, action_dimension=action_dimension, action_limits=action_limits
@@ -171,7 +171,7 @@ def defineRLAgent(
 
     loss = srl.losses.SoftActorCriticGradientLoss(
         value_function=value_function,
-        minimum_entropy=-action_dimension*2,
+        minimum_entropy=-action_dimension*1.3,
         polyak_averaging_tau=0.05,
         lock=lock,
         validation_split=0.01,

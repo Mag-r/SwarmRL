@@ -210,7 +210,7 @@ engine = OfflineLearning()
 
 
 protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_4")
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_10")
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(engine, 1000, 10)

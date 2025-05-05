@@ -106,9 +106,9 @@ class BaslerCameraObservable(Observable, ABC):
         """
         blob_detection_params = cv2.SimpleBlobDetector_Params()
         blob_detection_params.filterByArea = True
-        blob_detection_params.maxArea = 50
-        blob_detection_params.minArea = 10
-        blob_detection_params.filterByCircularity = True
+        blob_detection_params.maxArea = 70
+        blob_detection_params.minArea = 30
+        blob_detection_params.filterByCircularity = False
         blob_detection_params.minCircularity = 0.5
         blob_detection_params.maxCircularity = 1.0
         blob_detection_params.filterByConvexity = False
@@ -194,7 +194,10 @@ class BaslerCameraObservable(Observable, ABC):
             logger.warning(
                 f"Image queue is starting to fill. Current size {self.image_queue.qsize()}"
             )
-        self.image_queue.put(cv2.resize(image, (506, 506)))
+        image = cv2.resize(image, (506, 506))
+        self.image_queue.put(image.copy())
+        image[210:300, 140:360,:] = 0
+
         image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
         self.track_blue_ball(image)
         positions = self.extract_positions(image)
@@ -226,6 +229,7 @@ class BaslerCameraObservable(Observable, ABC):
         image = original_image.copy()
         mask = (image[:, :, 2] > image[:, :, 1]) & (image[:, :, 2] > image[:, :, 0])
         image[mask] = 0
+
         image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
         image = np.array(image, dtype=np.float32)
         image = (image - np.mean(image)) / np.std(image)
