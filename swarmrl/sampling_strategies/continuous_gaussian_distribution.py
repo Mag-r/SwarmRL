@@ -73,23 +73,18 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             log_probs = None
         else:
             epsilon = 1e-7
-            diag_cov = jnp.exp(logits[:, self.action_dimension :]) * (self.action_limits[:,1] - self.action_limits[:,0]) + epsilon
-            assert diag_cov.shape == logits[:, self.action_dimension :].shape, f"Diagonal covariance matrix must have the same shape as the logits. Has shape {diag_cov.shape}"
-            cov_matrices = jnp.vectorize(lambda d: jnp.diag(d), signature="(n)->(n,n)")(
-                diag_cov
-            )
+            std = jnp.exp(logits[:, self.action_dimension :]) * (self.action_limits[:,1] - self.action_limits[:,0]) + epsilon
 
-            action = jax.random.multivariate_normal(subkey, mean=mean, cov=cov_matrices)
+            pre_squash_action = jax.random.normal(subkey, shape=mean.shape) * std + mean
+            action = jnp.tanh(pre_squash_action)
+
             if calculate_log_probs:
-                log_probs = jax.scipy.stats.multivariate_normal.logpdf(
-                    action, mean=mean, cov=cov_matrices
-                )
-                if self.action_limits is not None:
-                    correction = 2 * (
-                        jnp.log(2) - action - jax.nn.softplus(-2 * action)
-                    )
-                    correction = correction.sum(axis=-1)
-                    log_probs = log_probs - correction
+                log_probs = -0.5 * (((pre_squash_action - mean) / std) ** 2 + 2 * jnp.log(std) + jnp.log(2 * jnp.pi))
+                log_probs = log_probs.sum(axis=-1)
+
+                # Correction
+                correction = jnp.sum(jnp.log(1 - jnp.tanh(pre_squash_action) ** 2 + epsilon), axis=-1)
+                log_probs = log_probs - correction
             else:
                 log_probs = None
         action = (
