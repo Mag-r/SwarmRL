@@ -35,30 +35,30 @@ class Autoencoder(nn.Module):
     def __call__(self, x):
         # Encoder
         x = nn.Conv(16, (3, 3), strides=(1, 1), padding="SAME")(x)
-        x = nn.relu(x)
+        x = nn.sigmoid(x)
 
         x = nn.Conv(32, (3, 3), strides=(1, 1), padding="SAME")(x)
-        x = nn.relu(x)
+        x = nn.sigmoid(x)
 
         x = nn.ConvTranspose(32, (3, 3), strides=(1, 1), padding="SAME")(x)
-        x = nn.relu(x)
+        x = nn.sigmoid(x)
 
         x = nn.ConvTranspose(16, (3, 3), strides=(1, 1), padding="SAME")(x)
-        x = nn.relu(x)
+        x = nn.sigmoid(x)
 
         x = nn.Conv(1, (3, 3), strides=(1, 1), padding="SAME")(x)
 
         return nn.sigmoid(x)
 
 
-sequence_length = 2
+sequence_length = 1
 resolution = 253
 
 number_particles = 30
-learning_rate = 1e-3
+learning_rate = 3e-3
 
 obs = BaslerCameraObservable(
-    [resolution, resolution], Autoencoder(), model_path="Models/autoencoder_4_25.pkl", number_particles=number_particles
+    [resolution, resolution], Autoencoder(), model_path="Models/autoencoder_5_9.pkl", number_particles=number_particles
 )
 # task = ExperimentTask(number_particles=number_particles)
 # task = ExperimentHexagonTask(number_particles=number_particles)
@@ -99,8 +99,8 @@ protocol = setupNetwork.defineRLAgent(
 )
 
 # protocol.restore_agent(identifier=task.__class__.__name__)
-# protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_4")
-# protocol.actor_network.set_temperature(0.2)
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_5")
+# protocol.actor_network.set_temperature(0.02)
 rl_trainer = Trainer([protocol], lock=lock, deployment_mode=learning_rate == 0.0)
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(experiment, 1000, 10)

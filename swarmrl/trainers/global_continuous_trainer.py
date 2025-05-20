@@ -13,6 +13,7 @@ from swarmrl.engine.engine import Engine
 from swarmrl.trainers.trainer import Trainer
 from swarmrl.force_functions.global_force_fn import GlobalForceFunction
 from swarmrl.agents.MPI_actor_critic import MPIActorCriticAgent
+import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -171,12 +172,19 @@ class GlobalContinuousTrainer(Trainer):
                         
                     else:
                         logger.info("Sampling is faster than learning.")
+
+                        if not self.learning_thread.is_alive() and not self.deployment_mode:
+                            logger.warning("Learning thread has stopped unexpectedly. Try restarting the training.")
+                            self.learning_thread = threading.Thread(target=self.async_update_rl)
+                            self.learning_thread.start()
+
+
                     if episode % 10 == 0 and episode > 0:
                             # Save the agents every 10 episodes.
                             logger.info(
                                 "Trying to seperate the rafts and save the agents."
                             )
-                            self.engine.seperate_rafts()
+                            # self.engine.seperate_rafts()
                             with self.lock:
                                 for agent in self.agents.values():
                                     agent.save_trajectory(

@@ -14,13 +14,23 @@ class BallRacingTask(Task):
         self.previous_tile_ball = None
         self.moved_back = False
         self.time_on_current_tile = 0.0
+        self.visited_tiles = set()
+        self.previous_com = np.array([0, 0])
 
-    def current_tile(self, position_ball: np.ndarray) -> int:
-        x = position_ball[0]
-        y = position_ball[1]
+    def current_tile(self, position: np.ndarray) -> int:
+        """Discretizes the position of the ball into a tile number between 0 and 59, counting clockwise.
+
+        Args:
+            position (np.ndarray): position to be discretized
+
+        Returns:
+            int: Number of the tile
+        """
+        x = position[0]
+        y = position[1]
         
         central_point = jnp.array([126.5, 126.5])  
-        vector = position_ball - central_point
+        vector = position - central_point
         angle = jnp.arctan2(vector[1], vector[0]) * (180 / jnp.pi)  
         if angle < 0:
             angle += 360 
@@ -29,28 +39,39 @@ class BallRacingTask(Task):
 
     def __call__(self, positions: np.ndarray) -> float:
         # position_ball = positions[:, -1, :]
-        position_com = jnp.mean(positions[:,:-2,:], axis=1)
+        position_com = positions[:, -3, :]
         position_com = jnp.squeeze(position_com)
         current_tile_com = self.current_tile(position_com)
-        current_tile_ball = self.current_tile(positions[:, -2, :].squeeze())
+        current_tile_ball = self.current_tile(positions[:, -1, :].squeeze())
+        self.visited_tiles.add(current_tile_com)
         if self.previous_tile_com is None:
             self.previous_tile_com = current_tile_com
             self.previous_tile_ball = current_tile_ball
             return 0.0
         reward = current_tile_com - self.previous_tile_com
-        if reward <= -50:
-            reward = 100 if not self.moved_back else 1
+        reward += (current_tile_ball - self.previous_tile_ball)
+        if reward > 30:
+            reward = -1
+        
+        if reward <= -50 and len(self.visited_tiles) > 40:
+            reward = 100 if not self.moved_back else 10
             self.moved_back = False
-        self.moved_back = reward < 0
-        if self.previous_tile_com == current_tile_com or self.previous_tile_ball == current_tile_ball:
+            self.visited_tiles = set()
+        elif reward <= -50:
+            reward = 1
+            self.moved_back = False
+            self.visited_tiles = set()
+        self.moved_back = reward < 0 if not self.moved_back else self.moved_back # if true once it keeps true
+        if self.previous_tile_com == current_tile_com:
             self.time_on_current_tile += 1
-            if self.time_on_current_tile > 10:
+            if self.time_on_current_tile > 8:
                 reward -= 10
                 self.time_on_current_tile = 0
         else:
             self.time_on_current_tile = 0
-        # reward += (current_tile_ball - self.previous_tile_ball)*2
+
         logger.info(f"Current tile: {current_tile_ball}, Previous tile: {self.previous_tile_ball}, Reward: {reward}, time on current tile: {self.time_on_current_tile}")
+        logger.info(f"Current tile COM: {current_tile_com}, Previous tile COM: {self.previous_tile_com}"), 
         self.previous_tile_com = current_tile_com
         self.previous_tile_ball = current_tile_ball
         return reward

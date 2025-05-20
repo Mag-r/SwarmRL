@@ -21,18 +21,16 @@ def load_and_display_image():
                 try:
                     image = plt.imread(IMAGE_PATH)
                 except:
-                    print("Error loading image, try again", flush=True)
                     continue
                 if img_display is None:
                     img_display = ax.imshow(image)
                     plt.axis("off")
                 else:
                     img_display.set_data(image)
-                    print("Updated image", flush=True)
                 plt.draw()
                 plt.pause(0.1)  # Allow the display to update
 
-        time.sleep(0.1)  # Check for updates every 0.5 seconds
+        time.sleep(0.1)  
 
 
 if __name__ == "__main__":

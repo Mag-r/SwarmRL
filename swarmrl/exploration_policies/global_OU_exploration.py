@@ -38,6 +38,7 @@ class GlobalOUExploration(ExplorationPolicy, ABC):
         self.noise = np.zeros(action_dimension)
         self.action_limits = action_limits
 
+
 #     @partial(jax.jit, static_argnums=(0,))
     def __call__(self, model_actions: np.ndarray, rng_key) -> np.ndarray:
         """
@@ -47,16 +48,16 @@ class GlobalOUExploration(ExplorationPolicy, ABC):
 
         value_range = self.action_limits[:, 1] - self.action_limits[:, 0]
 
-        noise_update = self.drift * (self.long_term_mean - self.noise)
+        long_term_noise_shift = self.drift * (self.long_term_mean - self.noise)
         random_noise = self.volatility * value_range * jax.random.normal(key_normal, shape=self.noise.shape)
 
         mask = (jax.random.uniform(key_uniform, shape=self.noise.shape) < 0.1).astype(np.float32)
 
-        self.noise += noise_update + random_noise * mask
-        self.noise = self.noise.reshape(1, self.action_dimension)
+        self.noise += long_term_noise_shift + random_noise 
+        self.noise = self.noise.reshape(1, self.action_dimension) * mask
 
         actions = model_actions + self.noise
-        # logger.info(f"noise: {self.noise}")
+        logger.info(f"noise: {self.noise}")
 
         actions = np.clip(actions, self.action_limits[:, 0], self.action_limits[:, 1])
         return actions

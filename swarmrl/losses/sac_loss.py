@@ -216,7 +216,7 @@ class SoftActorCriticGradientLoss(Loss):
         # logger.info(
         #     f"mean actor grad = {mean_actor_grad}, mean critic grad = {mean_critic_grad}"
         # )
-
+        actor_grad["temperature"] = 0
         assert actor_grad["temperature"] == 0
 
         critic_network.update_model(
@@ -276,7 +276,7 @@ class SoftActorCriticGradientLoss(Loss):
         Returns:
             tuple(float, tuple): actor loss and tuple of log probabilities, actor loss per sample, and updated batch stats.
         """
-        actions, log_probs, updated_batch_stats_actor = (
+        actions, log_probs, updated_batch_stats_actor, logits = (
             actor_network.compute_action_training(
                 actor_network_params, feature_data, action_sequence[:, :-1, :], carry
             )
@@ -293,6 +293,14 @@ class SoftActorCriticGradientLoss(Loss):
         actor_loss = jnp.exp(log_temp) * log_probs - jnp.minimum(
             first_q_value, second_q_value
         )
+        actor_loss += 1e-4 * sum(
+            jnp.sum(jnp.square(param))
+            for name, param in jax.tree_util.tree_flatten_with_path(actor_network_params)[0]
+            if "temperature" not in name
+        )
+        variance = jnp.exp(logits[:,6:])
+        actor_loss += 3e-3 * jnp.mean(variance)
+        # actor_loss *= 0.5
         assert jnp.shape(actor_loss) == jnp.shape(first_q_value)
         return jnp.mean(actor_loss), (log_probs, actor_loss, updated_batch_stats_actor)
 
@@ -332,9 +340,14 @@ class SoftActorCriticGradientLoss(Loss):
             )
         )
 
-        critic_loss = (first_q_value - desired_q_value) ** 2 + (
+        critic_loss = 1/2*((first_q_value - desired_q_value) ** 2 + (
             second_q_value - desired_q_value
-        ) ** 2
+        ) ** 2)
+        l2_regularization = sum(
+            jnp.sum(jnp.square(param)) for param in jax.tree_util.tree_leaves(critic_network_params)
+        )
+        critic_loss += 1e-4 * l2_regularization
+        critic_loss *= 0.3
         assert jnp.shape(critic_loss) == jnp.shape(desired_q_value)
         assert jnp.shape(critic_loss) == jnp.shape(first_q_value)
         logger.debug(f"{critic_loss=}")
@@ -358,8 +371,23 @@ class SoftActorCriticGradientLoss(Loss):
         action_sequence,
         log_temp,
     ):
+        """Calculates the desired Q value, to be used in the critic loss. Eq 5 in SAC-paper.
 
-        next_action, next_log_probs, _ = actor_network.compute_action_training(
+        Args:
+            critic_network (Network): _description_
+            actor_network_params (_type_): _description_
+            actor_network (_type_): _description_
+            next_feature_data (_type_): _description_
+            next_carry (_type_): _description_
+            rewards (_type_): _description_
+            action_sequence (_type_): _description_
+            log_temp (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+
+        next_action, next_log_probs, *_ = actor_network.compute_action_training(
             actor_network_params,
             next_feature_data,
             action_sequence[:, 1:, :],
@@ -551,7 +579,7 @@ class SoftActorCriticGradientLoss(Loss):
                     action_sequence=action_sequence_batch,
                 )
                 )
-                logger.info(f"batch {batch_idx} actor training loss = {batched_actor_training_loss}, critic training loss = {batched_critic_training_loss}, temperature training loss = {batched_temperature_trainig_loss}")
+                # logger.info(f"batch {batch_idx} actor training loss = {batched_actor_training_loss}, critic training loss = {batched_critic_training_loss}, temperature training loss = {batched_temperature_trainig_loss}")
                 if self.error_predicted_reward.shape[0] < batch_end:
                     padding_length = batch_end - self.error_predicted_reward.shape[0]
                     self.error_predicted_reward = jnp.pad(

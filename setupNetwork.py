@@ -9,6 +9,8 @@ import os
 
 logger = logging.getLogger(__name__)
 action_dimension = 6
+action_limits = jnp.array([[0,70],[0,70],[0,30], [0,30], [-0.8, 0.8], [-0.5, 0.5]])
+
 
 class ActorNet(nn.Module):
     """A simple dense model.
@@ -27,7 +29,7 @@ class ActorNet(nn.Module):
         )
         self.lstm = self.ScanLSTM(features=2)
         temperature = self.param(
-            "temperature", lambda key, shape: jnp.full(shape, jnp.log(0.01)), (1,)
+            "temperature", lambda key, shape: jnp.full(shape, jnp.log(1)), (1,)
         )
 
     @nn.compact
@@ -36,21 +38,15 @@ class ActorNet(nn.Module):
         state = state.reshape((batch_size, sequence_length, -1))
         state = state/253
 
-        x = nn.Dense(features=32)(state)
-        x = nn.PReLU()(x)
-        x = nn.BatchNorm(use_running_average=not train)(x)
+
         if carry is None:
             carry = self.lstm.initialize_carry(
-                jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
+                jax.random.PRNGKey(0), state.shape[:1] + state.shape[2:]
             )
-        x = nn.SelfAttention(num_heads=16)(x)
-        x = nn.sigmoid(x)
+        x = nn.Dense(features=64)(state)
+        x = nn.silu(x)
         x = nn.BatchNorm(use_running_average=not train)(x)
-        x = jnp.concatenate([x, state], axis=-1)
         x = x.reshape((batch_size, -1))
-        x = nn.Dense(features=64)(x)
-        x = nn.PReLU()(x)
-        x = nn.BatchNorm(use_running_average=not train)(x)
         x = nn.Dense(features=action_dimension*2)(x)
         return x, carry
 
@@ -72,13 +68,10 @@ class CriticNet(nn.Module):
         batch_size, sequence_length = state.shape[0], state.shape[1]
         state = state.reshape((batch_size,sequence_length, -1))
         state = state/253 
-        state = nn.SelfAttention(num_heads=16)(state)
         x = nn.Dense(features=64)(state)
-        x = nn.PReLU()(x)
+        x = nn.silu(x)
         x = nn.BatchNorm(use_running_average=not train)(x)
-        x = nn.Dense(features=32)(x)
-        x = nn.PReLU()(x)
-        x = nn.BatchNorm(use_running_average=not train)(x)
+
         if carry is None:
             carry = self.lstm.initialize_carry(
                 jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
@@ -86,28 +79,20 @@ class CriticNet(nn.Module):
         # carry, x = self.lstm(carry, x)
         # x = nn.PReLU()(x)
         # x = nn.BatchNorm(use_running_average=not train)(x)
-        x = nn.SelfAttention(num_heads=8)(x)
-        x = nn.sigmoid(x)
-        x = nn.BatchNorm(use_running_average=not train)(x)
-        x = jnp.concatenate([x, state], axis=-1)
+        action_limits_range = action_limits[:, 1] - action_limits[:, 0]
+        action = action / action_limits_range
         x = x.reshape((batch_size, -1))
-        action = nn.Dense(features=12)(action)
-        action = nn.sigmoid(action)
         x = jnp.concatenate([x, action], axis=-1)
+        x = nn.Dense(features=64)(x)
+        x = nn.silu(x)
+        x = nn.BatchNorm(use_running_average=not train)(x)
         q_1 = nn.Dense(features=32, name="Critic_1_1")(x)
         q_2 = nn.Dense(features=32, name="Critic_2_1")(x)
-        q_2 = nn.Dropout(rate=0.1)(q_2, deterministic=not train)
-        q_1 = nn.PReLU()(q_1)
-        q_2 = nn.sigmoid(q_2)
+        q_1 = nn.silu(q_1)
+        q_2 = nn.silu(q_2)
         q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
         q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
-        
-        q_1 = nn.Dense(features=16, name="Critic_1_2")(q_1)
-        q_2 = nn.Dense(features=16, name="Critic_2_2")(q_2)
-        q_1 = nn.PReLU()(q_1)
-        q_2 = nn.sigmoid(q_2)
-        q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
-        q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
+
         q_1 = nn.Dense(features=1)(x)
         q_2 = nn.Dense(features=1)(x)
         return q_1, q_2
@@ -121,11 +106,9 @@ def defineRLAgent(
         logger.info("Deployment mode")
         optimizer = optax.adam(learning_rate=0.0)
     else:
-        lr_schedule = optax.exponential_decay(
+        lr_schedule = optax.cosine_decay_schedule(
             init_value=learning_rate,
-            transition_steps=100,
-            decay_rate=0.99,
-            staircase=True,
+            decay_steps=10000,
         )
         optimizer = optax.inject_hyperparams(optax.adam)(learning_rate=lr_schedule)
 
@@ -134,20 +117,19 @@ def defineRLAgent(
     
 
     # Define a sampling_strategy
-    action_limits = jnp.array([[0,90],[0,90],[0,40], [0,40], [-0.8, 0.8], [-0.5, 0.5]])
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
     exploration_policy = srl.exploration_policies.GlobalOUExploration(
-        drift=0.04, volatility=0.03, action_dimension=action_dimension, action_limits=action_limits
+        drift=0.03, volatility=0.1, action_dimension=action_dimension, action_limits=action_limits
     )
 
-    value_function = srl.value_functions.TDReturnsSAC(gamma=0.9, standardize=True)
+    value_function = srl.value_functions.TDReturnsSAC(gamma=0.8, standardize=True)
     actor_network = srl.networks.ContinuousActionModel(
         flax_model=actor,
         optimizer=optimizer,
         input_shape=(
             1,
             sequence_length,
-            number_particles + 2,
+            number_particles + 4,
             2,
         ),  # batch implicitly 1 ,time,H,W,channels for conv
         sampling_strategy=sampling_strategy,
@@ -162,7 +144,7 @@ def defineRLAgent(
         input_shape=(
             1,
             sequence_length,
-            number_particles + 2,
+            number_particles + 4,
             2,
         ),  # batch implicitly 1 ,time,H,W,channels for conv
         action_dimension=action_dimension,
@@ -171,11 +153,12 @@ def defineRLAgent(
 
     loss = srl.losses.SoftActorCriticGradientLoss(
         value_function=value_function,
-        minimum_entropy=-action_dimension*1.3,
+        minimum_entropy=-action_dimension,
         polyak_averaging_tau=0.05,
         lock=lock,
         validation_split=0.01,
         fix_temperature=False,
+        batch_size=256,
     )
 
     protocol = srl.agents.MPIActorCriticAgent(

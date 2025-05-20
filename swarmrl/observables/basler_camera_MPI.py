@@ -94,11 +94,13 @@ class BaslerCameraObservable(Observable, ABC):
         self.image_saving_thread.start()
         self.autoencoder = autoencoder
         self.init_autoencoder(model_path)
-        self.threshold = 0.2
+        self.threshold = 0.6
         self.init_blob_detector()
         self.blue_ball_position = np.zeros((1, 1, 2))
         self.blue_ball_velocity = np.zeros((1, 1, 2))
         self.target = np.zeros((1, 1, 2))
+        self.com_velocity = np.zeros((1, 1, 2))
+        self.com_position = np.zeros((1, 1, 2))
 
     def init_blob_detector(self):
         """
@@ -106,8 +108,8 @@ class BaslerCameraObservable(Observable, ABC):
         """
         blob_detection_params = cv2.SimpleBlobDetector_Params()
         blob_detection_params.filterByArea = True
-        blob_detection_params.maxArea = 70
-        blob_detection_params.minArea = 30
+        blob_detection_params.maxArea = 100
+        blob_detection_params.minArea = 20
         blob_detection_params.filterByCircularity = False
         blob_detection_params.minCircularity = 0.5
         blob_detection_params.maxCircularity = 1.0
@@ -137,6 +139,8 @@ class BaslerCameraObservable(Observable, ABC):
             self.model_state = self.model_state.replace(params=model_params)
 
     def init_camera(self):
+        """Intialize the camera with the parameters defined in camParam.
+        """
         self.camera.Open()
         self.camera.AcquisitionMode.SetValue("Continuous")
         self.camera.AcquisitionFrameRate.SetValue(self.camParam["fps"])
@@ -194,11 +198,11 @@ class BaslerCameraObservable(Observable, ABC):
             logger.warning(
                 f"Image queue is starting to fill. Current size {self.image_queue.qsize()}"
             )
-        image = cv2.resize(image, (506, 506))
+        image = cv2.resize(image, (506,506))
         self.image_queue.put(image.copy())
-        image[210:300, 140:360,:] = 0
-
         image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
+        # image[105:150, 70:180,:] = 0
+
         self.track_blue_ball(image)
         positions = self.extract_positions(image)
         if positions.shape[1] < self.number_particles:
@@ -207,17 +211,23 @@ class BaslerCameraObservable(Observable, ABC):
             positions = np.concatenate((positions, padding), axis=1)
         elif positions.shape[1] > self.number_particles:
             positions = positions[:, : self.number_particles, :]
-
+        positions = np.concatenate((positions, self.com_velocity), axis=1)
+        positions = np.concatenate((positions, self.com_position), axis=1)
         positions = np.concatenate((positions, self.blue_ball_velocity), axis=1)
         positions = np.concatenate((positions, self.blue_ball_position), axis=1)
         return positions
 
     def track_blue_ball(self, image: onp.ndarray):
+        """Gets the position of the blue ball in the image. Only works if the blue ball is the only blue object in the image.
+
+        Args:
+            image (onp.ndarray): RGB image of the camera.
+        """
         thresholded_image = (image[:,:,2]>120) & (image[:,:,2]-image[:,:,0]>60) & (image[:,:,2]-image[:,:,1]>60) & (image[:,:,0]<180)
         keypoints = self.blob_detector.detect(thresholded_image.astype(onp.uint8) * 255)
 
         if len(keypoints) == 1:
-            self.blue_ball_velocity = self.blue_ball_position - np.array(keypoints[0].pt).reshape(1, 1, 2)
+            self.blue_ball_velocity = np.array(keypoints[0].pt).reshape(1, 1, 2) - self.blue_ball_position 
             self.blue_ball_position = np.array(keypoints[0].pt).reshape(1, 1, 2)
         else:
             logger.warning(f"detected {len(keypoints)} keypoints, expected 1, using previous position {self.blue_ball_position}")
@@ -227,27 +237,38 @@ class BaslerCameraObservable(Observable, ABC):
         Extracts the positions of the colloids from the image.
         """
         image = original_image.copy()
-        mask = (image[:, :, 2] > image[:, :, 1]) & (image[:, :, 2] > image[:, :, 0])
-        image[mask] = 0
+        # mask = (image[:, :, 2] > image[:, :, 1]) & (image[:, :, 2] > image[:, :, 0])
+        # image[mask] = 0
 
         image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         image = np.array(image, dtype=np.float32)
-        image = (image - np.mean(image)) / np.std(image)
         image = np.reshape(image, (1, self.resolution[0], self.resolution[1], 3))
         cleaned_image = self.model_state.apply_fn(self.model_state.params, image)
         positions = self.peak_detection(cleaned_image)
-        contour_image = onp.array(original_image, dtype=np.uint8)
-        for position in positions:
-            center = tuple([position[1], position[0]])
-            cv2.circle(contour_image, center, 2, (255, 0, 0), -1)
-        center = tuple(self.blue_ball_position[0, 0].astype(int).tolist())
-        cv2.circle(contour_image, center, 4, (0, 0, 255), -1)
-        self.image_queue.put(contour_image)
-
         if len(positions) != self.number_particles:
             logger.warning(
                 f"Number of particles detected {len(positions)} is not equal to the expected number of particles {self.number_particles}."
             )
+            logger.info(f"index of image: {self.image_count}")
+            
+        contour_image = onp.array(original_image, dtype=np.uint8)
+        mean_x = 0
+        mean_y = 0
+        for position in positions:
+            center = tuple([position[1], position[0]])
+            mean_x += position[1]
+            mean_y += position[0]
+            cv2.circle(contour_image, center, 2, (255, 0, 0), -1)
+        blue_ball = tuple(self.blue_ball_position[0, 0].astype(int).tolist())
+        cv2.circle(contour_image, blue_ball, 4, (0, 0, 255), -1)
+        
+
+        center_of_mass = (int(mean_x / len(positions)), int(mean_y / len(positions)))
+        self.com_velocity = np.array(center_of_mass).reshape(1, 1, 2) - self.com_position
+        self.com_position = np.array(center_of_mass).reshape(1, 1, 2)
+        cv2.circle(contour_image, center_of_mass, 4, (0, 255, 0), -1)
+        self.image_queue.put(contour_image)
 
         return positions.reshape(1, -1, 2)
 
@@ -256,19 +277,26 @@ class BaslerCameraObservable(Observable, ABC):
         Detects peaks in the image using the skimage feature module.
         """
         coordinates = peak_local_max(
-            onp.array(cleaned_image.squeeze()), min_distance=2, threshold_abs=self.threshold, num_peaks=self.number_particles
+            onp.array(cleaned_image.squeeze()), min_distance=1, threshold_abs=self.threshold, num_peaks=self.number_particles
         )
         return coordinates
 
     def save_images_async(self):
+        """
+        Saves the images from the camera to a file. 253x253 images are saved as latest_camera_image.png
+        506x506 images are saved as camera_image_XXXX.png.
+        """
         while True:
             if not self.image_queue.empty():
                 image = self.image_queue.get()
-                plt.imsave(
-                    f"images/camera_image_{self.image_count:04d}.png",
-                    image,
-                )
-                plt.imsave(f"images/latest_camera_image.png", image)
-                self.image_count = self.image_count + 1
+                if image.shape[0] == 253:
+                    image = cv2.resize(image, (506, 506))
+                    plt.imsave(f"images/latest_camera_image.png", image)
+                elif image.shape[0] == 506:
+                    plt.imsave(
+                        f"images/camera_image_{self.image_count:04d}.png",
+                        image,
+                    ) if image.shape[0] == 506 else None
+                    self.image_count = self.image_count + 1
             else:
                 threading.Event().wait(0.1)

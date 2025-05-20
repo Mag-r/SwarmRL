@@ -39,6 +39,7 @@ class GauravExperiment(Engine):
         """Establish TCP connections with LabVIEW"""
         self.labview_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.labview_publisher = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        logger.info("Attepmting to establish connection with LabVIEW at %s:%d", self.labview_ip, self.labview_port)
         self.labview_listener.settimeout(100)
 
         self.labview_listener.connect((self.labview_ip, self.labview_port))
@@ -142,6 +143,8 @@ class GauravExperiment(Engine):
         return action
 
     def seperate_rafts(self):
+        """Seperate the rafts by sending a strong magnetic field."""
+        
         seperation_action = MPIAction(
             magnitude=[100, 100], frequency=[30, 30], keep_magnetic_field=10
         )
@@ -162,12 +165,12 @@ class GauravExperiment(Engine):
             time.sleep(float(action.keep_magnetic_field) * 0.95)
             
             force_model.set_training_mode(False)
-            for _ in range(3):
-                action = force_model.calc_action(None)
-                action = MPIAction(
-                    magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=1, gradient=action[4:6]
-                )
-                self.send_action(action)
-                time.sleep(float(action.keep_magnetic_field) * 0.95)
+            # for _ in range(3):
+            #     action = force_model.calc_action(None)
+            #     action = MPIAction(
+            #         magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=1, gradient=action[4:6]
+            #     )
+            #     self.send_action(action)
+            #     time.sleep(float(action.keep_magnetic_field) * 0.95)
             force_model.set_training_mode(True)
             force_model.calc_reward(self.colloids)
