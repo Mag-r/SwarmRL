@@ -7,6 +7,12 @@ logger = logging.getLogger(__name__)
 
 
 class BallRacingTask(Task):
+    """This class implements the task of the ball racing experiment. The goal is to make the rafts and the ball move in a circle.
+    The reward is given by the difference between the current tile and the previous tile. The tiles are numbered from 0 to 59, counting clockwise. Not moving the raft is penalized.
+
+    Args:
+        Task (Task): Parent class
+    """
 
     def __init__(self):
         super().__init__(particle_type=0)

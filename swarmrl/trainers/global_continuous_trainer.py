@@ -185,8 +185,10 @@ class GlobalContinuousTrainer(Trainer):
                                 "Trying to seperate the rafts and save the agents."
                             )
                             # self.engine.seperate_rafts()
+                            
                             with self.lock:
                                 for agent in self.agents.values():
+                                    agent.actor_network.exploration_policy.reduce_randomness()
                                     agent.save_trajectory(
                                         identifier=f"{agent.task.__class__.__name__}_episode_{int(episode/10.0)}"
                                     )

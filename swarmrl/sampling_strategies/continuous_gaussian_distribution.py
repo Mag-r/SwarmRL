@@ -33,15 +33,16 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
         """
         Squashes the action to the range indicated by action_limits using tanh.
         Args:
-            action (jnp.ndarray): The action to squash.
+            action (jnp.ndarray): Shape (batch_size, action_dim)
         Returns:
-            jnp.ndarray: The squashed action.
+            jnp.ndarray: Shape (batch_size, action_dim)
         """
-        squash_function = lambda x: self.action_limits[:, 0] + (
-            jnp.tanh(x) + 1
-        ) / 2.0 * (self.action_limits[:, 1] - self.action_limits[:, 0])
-        action = jax.vmap(squash_function)(action)
-        return action
+        low = self.action_limits[:, 0]
+        high = self.action_limits[:, 1]
+        scale = (high - low) / 2.0
+        mid = (high + low) / 2.0
+        return jnp.tanh(action) * scale + mid
+
 
     @partial(
         jax.jit, static_argnames=["self", "deployment_mode", "calculate_log_probs"]
@@ -55,9 +56,10 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
     ) -> tuple[jnp.ndarray, float]:
         """
         Generates an action and its corresponding log probability using a continuous Gaussian distribution.
+        
         Args:
             logits (jnp.ndarray): The logits representing the parameters of the Gaussian distribution.
-            rng (jax.random.KeyArray): PRNG key for random sampling.
+            subkey (jax.random.KeyArray): PRNG key for random sampling.
             calculate_log_probs (bool): Whether to calculate log probabilities.
             deployment_mode (bool): Whether to return deterministic actions.
         Returns:
@@ -69,26 +71,26 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
 
         mean = logits[:, : self.action_dimension]
         if deployment_mode:
-            action = mean
+            pre_squash_action = mean
             log_probs = None
         else:
             epsilon = 1e-7
-            std = jnp.exp(logits[:, self.action_dimension :]) * (self.action_limits[:,1] - self.action_limits[:,0]) + epsilon
+            log_std = logits[:, self.action_dimension:]
+            log_std = jnp.clip(log_std, -20, 1)
+            std = jnp.exp(log_std)
 
             pre_squash_action = jax.random.normal(subkey, shape=mean.shape) * std + mean
-            action = jnp.tanh(pre_squash_action)
 
             if calculate_log_probs:
                 log_probs = -0.5 * (((pre_squash_action - mean) / std) ** 2 + 2 * jnp.log(std) + jnp.log(2 * jnp.pi))
                 log_probs = log_probs.sum(axis=-1)
 
-                # Correction
-                correction = jnp.sum(jnp.log(1 - jnp.tanh(pre_squash_action) ** 2 + epsilon), axis=-1)
+                correction = (2*(jnp.log(2)-pre_squash_action-jax.nn.softplus(-2*pre_squash_action))).sum(axis=-1)
                 log_probs = log_probs - correction
             else:
                 log_probs = None
         action = (
-            self.squash_action(action) if self.action_limits is not None else action
+            self.squash_action(pre_squash_action) if self.action_limits is not None else pre_squash_action
         )
         logger.debug(f"{action=}, {log_probs=}, with shape {action.shape}")
         return action, log_probs

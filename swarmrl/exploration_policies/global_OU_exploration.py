@@ -17,7 +17,7 @@ class GlobalOUExploration(ExplorationPolicy, ABC):
     Perform exploration by random moves.
     """
 
-    def __init__(self, action_limits, drift: float = 0.1, volatility: float = 0.1, long_term_mean: float = 0.0, action_dimension: int = 3):
+    def __init__(self, action_limits, drift: float = 0.1, volatility: float = 0.1, long_term_mean: float = 0.0, action_dimension: int = 3, epsilon: float = 1.0):
         """
         Constructor for the random exploration module.
 
@@ -37,6 +37,13 @@ class GlobalOUExploration(ExplorationPolicy, ABC):
         self.action_dimension = action_dimension
         self.noise = np.zeros(action_dimension)
         self.action_limits = action_limits
+        self.epsilon = 1.0
+
+    def reduce_randomness(self, decay: float = 0.95) -> None:
+        self.noise *= decay
+        self.epsilon *= decay
+        self.epsilon = max(self.epsilon, 0.01)
+        
 
 
 #     @partial(jax.jit, static_argnums=(0,))
@@ -51,7 +58,7 @@ class GlobalOUExploration(ExplorationPolicy, ABC):
         long_term_noise_shift = self.drift * (self.long_term_mean - self.noise)
         random_noise = self.volatility * value_range * jax.random.normal(key_normal, shape=self.noise.shape)
 
-        mask = (jax.random.uniform(key_uniform, shape=self.noise.shape) < 0.1).astype(np.float32)
+        mask = (jax.random.uniform(key_uniform, shape=self.noise.shape) < self.epsilon).astype(np.float32)
 
         self.noise += long_term_noise_shift + random_noise 
         self.noise = self.noise.reshape(1, self.action_dimension) * mask

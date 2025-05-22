@@ -293,13 +293,13 @@ class SoftActorCriticGradientLoss(Loss):
         actor_loss = jnp.exp(log_temp) * log_probs - jnp.minimum(
             first_q_value, second_q_value
         )
-        actor_loss += 1e-4 * sum(
-            jnp.sum(jnp.square(param))
-            for name, param in jax.tree_util.tree_flatten_with_path(actor_network_params)[0]
-            if "temperature" not in name
-        )
-        variance = jnp.exp(logits[:,6:])
-        actor_loss += 3e-3 * jnp.mean(variance)
+        # actor_loss += 1e-5 * sum(
+        #     jnp.sum(jnp.square(param))
+        #     for name, param in jax.tree_util.tree_flatten_with_path(actor_network_params)[0]
+        #     if "temperature" not in name
+        # )
+        variance = logits[:,6:]
+        actor_loss += 3e-2 * jnp.mean(variance)
         # actor_loss *= 0.5
         assert jnp.shape(actor_loss) == jnp.shape(first_q_value)
         return jnp.mean(actor_loss), (log_probs, actor_loss, updated_batch_stats_actor)
@@ -343,11 +343,11 @@ class SoftActorCriticGradientLoss(Loss):
         critic_loss = 1/2*((first_q_value - desired_q_value) ** 2 + (
             second_q_value - desired_q_value
         ) ** 2)
-        l2_regularization = sum(
-            jnp.sum(jnp.square(param)) for param in jax.tree_util.tree_leaves(critic_network_params)
-        )
-        critic_loss += 1e-4 * l2_regularization
-        critic_loss *= 0.3
+        # l2_regularization = sum(
+        #     jnp.sum(jnp.square(param)) for param in jax.tree_util.tree_leaves(critic_network_params)
+        # )
+        # critic_loss += 1e-5 * l2_regularization
+        # critic_loss *= 0.3
         assert jnp.shape(critic_loss) == jnp.shape(desired_q_value)
         assert jnp.shape(critic_loss) == jnp.shape(first_q_value)
         logger.debug(f"{critic_loss=}")

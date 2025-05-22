@@ -185,6 +185,8 @@ class ContinuousCriticModel(Network, ABC):
 
 
     def split_rng_key(self):
+        """Split the rng key for dropout.
+        """
         self.dropout_key, _ = jax.random.split(self.dropout_key)
         
         
@@ -220,7 +222,19 @@ class ContinuousCriticModel(Network, ABC):
         actions: np.ndarray,
         previous_actions: np.ndarray,
         carry: np.ndarray,
-    ):
+    )-> tuple:
+        """Computes the Q-values of the critic network.
+
+        Args:
+            params (FrozenDict): Parameters of the model.
+            observables (np.ndarray): state of the environment.
+            actions (np.ndarray): actions taken by the agent.
+            previous_actions (np.ndarray): part of the state that is not observable.
+            carry (np.ndarray): carry for the LSTM cell.
+
+        Returns:
+            tuple: Q_1 and Q_2 values, and batch stats updates.
+        """
         dropout_subkey = jax.random.fold_in(self.dropout_key, self.iteration_count)
         self.iteration_count += 1
         try:
