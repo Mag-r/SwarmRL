@@ -3,7 +3,7 @@ Module to implement a simple multi-layer perceptron for the colloids.
 """
 
 import numpy as np
-from rich.progress import BarColumn, Progress, TimeRemainingColumn
+from rich.progress import BarColumn, Progress, TimeRemainingColumn, TimeElapsedColumn
 from typing import List, Tuple
 import logging
 import queue
@@ -14,6 +14,7 @@ from swarmrl.trainers.trainer import Trainer
 from swarmrl.force_functions.global_force_fn import GlobalForceFunction
 from swarmrl.agents.MPI_actor_critic import MPIActorCriticAgent
 import psutil
+from scipy.stats import linregress
 
 logger = logging.getLogger(__name__)
 
@@ -70,12 +71,10 @@ class GlobalContinuousTrainer(Trainer):
 
         for agent in self.agents.values():
             if isinstance(agent, MPIActorCriticAgent):
-                logger.info(
-                    f"Current learning_rate is {agent.actor_network.model_state.opt_state.hyperparams['learning_rate']}"
-                )
+
                 ag_reward, ag_killed = agent.update_agent()
                 # logger.info(f"reward: {ag_reward}, sum: {np.sum(ag_reward)}")
-                reward += np.mean(ag_reward)
+                reward += np.mean(ag_reward[-10:])
                 switches.append(ag_killed)
             else:
                 raise NotImplementedError("Only MPIActorCriticAgent is supported.")
@@ -109,6 +108,7 @@ class GlobalContinuousTrainer(Trainer):
         self.engine = system_runner
         rewards = [0.0]
         current_reward = 0.0
+        linear_regression = 0.0
         # mp.set_start_method('spawn', force=True)
 
         force_fn = self.initialize_training()
@@ -121,7 +121,8 @@ class GlobalContinuousTrainer(Trainer):
             "Episode: {task.fields[Episode]}",
             BarColumn(),
             "Episode reward: {task.fields[current_reward]} Running Reward:"
-            " {task.fields[running_reward]}",
+            " {task.fields[running_reward]} Total reward: {task.fields[total_reward]} Linear Regression: {task.fields[linear_regression]}",
+            TimeElapsedColumn(),
             TimeRemainingColumn(),
         )
 
@@ -132,6 +133,8 @@ class GlobalContinuousTrainer(Trainer):
                 Episode=0,
                 current_reward=current_reward,
                 running_reward=np.mean(rewards),
+                total_reward=np.mean(rewards),
+                linear_regression=linear_regression,
                 visible=load_bar,
             )
             try:
@@ -162,12 +165,22 @@ class GlobalContinuousTrainer(Trainer):
                         logger.info(
                             f"Episode {episode}; mean immediate reward: {current_reward}"
                         )
+                        # Perform linear regression on rewards using scipy
+                        if len(rewards) > 1:
+                            x = np.arange(len(rewards))
+                            y = np.array(rewards)
+                            slope, _, _, _, _ = linregress(x, y)
+                            linear_regression = np.round(slope, 4)
+
+                        progress.update(task, linear_regression=linear_regression)
                         progress.update(
                             task,
                             advance=1,
                             Episode=episode,
                             current_reward=np.round(current_reward, 2),
                             running_reward=np.round(np.mean(rewards[-10:]), 2),
+                            total_reward=np.round(np.mean(rewards), 2),
+                            linear_regression=linear_regression,
                         )
                         
                     else:
@@ -184,7 +197,7 @@ class GlobalContinuousTrainer(Trainer):
                             logger.info(
                                 "Trying to seperate the rafts and save the agents."
                             )
-                            # self.engine.seperate_rafts()
+                            self.engine.seperate_rafts()
                             
                             with self.lock:
                                 for agent in self.agents.values():

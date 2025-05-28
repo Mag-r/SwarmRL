@@ -26,49 +26,63 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 action_dimension = 6
 action_limits = jnp.array([[0,70],[0,70],[0,30], [0,30], [-0.8, 0.8], [-0.5, 0.5]])
 
+import jax
+import jax.numpy as jnp
+from flax import linen as nn
+from typing import Tuple, Any
 
 class ParticlePreprocessor(nn.Module):
-    
-    def setup(self):
-        self.phi_dense = nn.Dense(32)
-        self.com_dense = nn.Dense(32)
+    """Embed each particle, apply self-attention over the n_particles dimension,
+       and pool to a per-time-step feature."""
+    hidden_dim: int = 64
+    num_heads: int = 8
 
     @nn.compact
-    def __call__(self, state):
+    def __call__(self, state: jnp.ndarray) -> jnp.ndarray:
         """
         Args:
             state: shape (batch, time, n_particles, dim)
         Returns:
-            features: shape (batch, time, 2 * hidden_dim)
+            features: shape (batch, time, hidden_dim)
         """
-        batch_size, sequence_length, n_particles, dim = state.shape
+        # Separate velocity from position
+        position = state[:, :, :-2, :]  # Exclude last two entries (velocity)
+        velocity = state[:, :, -2:, :]  # Only last two entries (velocity)
 
-        com = jnp.mean(state, axis=2) 
-        glob = self.com_dense(com.reshape(-1, dim))
-        glob = nn.silu(glob)
-        glob = glob.reshape(batch_size, sequence_length, -1)
-
-        rel = state - com[:, :, None, :]  
-        rel = rel.reshape(-1, n_particles, dim)  
-
-        # Self-attention over particles
-        x = nn.Dense(32)(rel)
+        # Process position
+        b, t, n, d = position.shape
+        x = position.reshape(b * t, n, d)
+        x = nn.Dense(self.hidden_dim)(x)          # (b*t, n, hidden_dim)
+        x = nn.silu(x)
         x = nn.LayerNorm()(x)
-        x = nn.SelfAttention(num_heads=4)(x)
+        x = nn.SelfAttention(
+            num_heads=self.num_heads,
+            qkv_features=self.hidden_dim,
+            out_features=self.hidden_dim,
+        )(x)                                 # (b*t, n, hidden_dim)
+        x = nn.silu(x)
+        x = nn.LayerNorm()(x)
+        x = jnp.mean(x, axis=1)                   # (b*t, hidden_dim)
+        position_features = x.reshape(b, t, self.hidden_dim)   # (batch, time, hidden_dim)
 
-        phi = jnp.mean(x, axis=1)
-        phi = self.phi_dense(phi)
-        phi = nn.silu(phi)
-        phi = phi.reshape(batch_size, sequence_length, -1)
+        # Process velocity
+        velocity = velocity.reshape(b * t, -1)  # Flatten velocity
+        velocity_features = nn.Dense(8)(velocity)
+        velocity_features = nn.silu(velocity_features)
+        velocity_features = nn.LayerNorm()(velocity_features)
+        velocity_features = velocity_features.reshape(b, t, -1)
 
-        return jnp.concatenate([phi, glob], axis=-1)  # shape: (B, T, 2 * hidden_dim)
+        # Concatenate position and velocity features
+        return jnp.concatenate([position_features, velocity_features], axis=-1)
+
 
 class ActorNet(nn.Module):
-    """A simple dense model.
-    (batch,time,features)
-    When dense at beginning, probably flatten is required
-    """
-    preprocessor: ParticlePreprocessor
+    """SAC Gaussian actor producing mean & log-std, keeps your original signature."""
+    preprocessor: Any  # e.g. ParticlePreprocessor()
+    hidden_dims: Tuple[int, ...] = (128, 128)
+    log_std_min: float = -5.0
+    log_std_max: float = 1.0
+    
     def setup(self):
         # Define a scanned LSTM cell
         self.ScanLSTM = nn.scan(
@@ -83,113 +97,101 @@ class ActorNet(nn.Module):
             "temperature", lambda key, shape: jnp.full(shape, jnp.log(1)), (1,)
         )
 
-    @nn.compact
-    def __call__(self, state, previous_actions, carry=None, train:bool = False):
-        batch_size, sequence_length = state.shape[0], state.shape[1]
-        state = self.preprocessor(state/253.0)
-        
-        action_limits_range = action_limits[:, 1] - action_limits[:, 0]
-        previous_actions = previous_actions.reshape((batch_size, sequence_length, -1))
-        previous_actions = previous_actions / action_limits_range
-        previous_actions = nn.Dense(features=32)(previous_actions)
-        previous_actions = nn.silu(previous_actions)
-        previous_actions = nn.BatchNorm(use_running_average=not train)(previous_actions)
 
-        x = nn.Dense(features=32)(state)
-        x = nn.silu(x)
-        x = nn.BatchNorm(use_running_average=not train)(x)
-        x = jnp.concatenate([x, previous_actions], axis=-1)
+    @nn.compact
+    def __call__(self,
+                 state: jnp.ndarray,
+                 previous_actions: jnp.ndarray,
+                 carry: Any = None,
+                 train: bool = False
+                 ) -> Tuple[jnp.ndarray, Any]:
+        """
+        Args:
+          state:            (batch, time, n_particles, dim)
+          previous_actions: (batch, time, action_dim)  # unused atm
+        Returns:
+          concat of (mu, log_std): shape (batch, action_dim*2), and carry (None)
+        """
         if carry is None:
             carry = self.lstm.initialize_carry(
                 jax.random.PRNGKey(0), state.shape[:1] + state.shape[2:]
             )
-        x = nn.SelfAttention(num_heads=8)(x)
-        x = nn.silu(x)
-        x = nn.BatchNorm(use_running_average=not train)(x)
-        x = jnp.concatenate([x, state], axis=-1)
-        x = x.reshape((batch_size, -1))
-        x = nn.Dense(features=32)(x)
-        x = nn.silu(x)
-        x = nn.BatchNorm(use_running_average=not train)(x)
-        x = nn.Dense(features=action_dimension)(x)
-        std = self.param("std", lambda key, shape: jnp.full(shape, -4.0), (action_dimension,))
-        std = jnp.tile(std, (batch_size, 1))
-        x = jnp.concatenate([x, std], axis=-1)
-        return x, carry
+        # 1) preprocess
+        x = self.preprocessor(state / 253.0)            # (batch, time, hidden_dim)
+
+        # 2) flatten time & features
+        b, t, h = x.shape
+        x = x.reshape(b, t * h)
+
+        # 3) MLP
+        for hd in self.hidden_dims:
+            x = nn.Dense(hd)(x)
+            x = nn.silu(x)
+            x = nn.LayerNorm()(x)
+
+        # 4) outputs
+        mu      = nn.Dense(action_dimension)(x)
+        log_std = nn.Dense(action_dimension)(x)
+        log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
+
+        # 5) concat so you still return a single tensor and carry
+        out = jnp.concatenate([mu, log_std], axis=-1)  # (batch, action_dim*2)
+        y = nn.BatchNorm(use_running_average=not train)(out)  # (batch, action_dim*2)
+        return out, carry
 
 
 class CriticNet(nn.Module):
-
-    preprocessor: ParticlePreprocessor
-
-    def setup(self):
-        # Define a scanned LSTM cell
-        self.ScanLSTM = nn.scan(
-            nn.OptimizedLSTMCell,
-            variable_broadcast="params",
-            split_rngs={"params": False},
-            in_axes=1,
-            out_axes=1,
-        )
-        self.lstm = self.ScanLSTM(features=32)
+    """Twin Q-networks for SAC, keeps your original signature."""
+    preprocessor: Any  # e.g. ParticlePreprocessor()
+    hidden_dims: Tuple[int, ...] = (128, 64)
 
     @nn.compact
-    def __call__(self, state, previous_actions, action, carry=None, train:bool = False):
-        batch_size, sequence_length = state.shape[0], state.shape[1]
+    def __call__(self,
+                 state: jnp.ndarray,
+                 previous_actions: jnp.ndarray,
+                 action: jnp.ndarray,
+                 carry: Any = None,
+                 train: bool = False
+                 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        """
+        Args:
+          state:            (batch, time, n_particles, dim)
+          previous_actions: (batch, time, action_dim)  # unused atm
+          action:           (batch, action_dim)
+        Returns:
+          q1, q2 each of shape (batch, 1)
+        """
+        # 1) preprocess
+        x = self.preprocessor(state / 253.0)            # (batch, time, hidden_dim)
+        b, t, h = x.shape
+        x = x.reshape(b, t * h)                       # (batch, t*h)
         action_limits_range = action_limits[:, 1] - action_limits[:, 0]
-        state = self.preprocessor(state/253.0)
+        action = action / action_limits_range          # (batch, action_dim)
 
-        
-        previous_actions = previous_actions.reshape((batch_size, sequence_length, -1))
-        previous_actions = previous_actions / action_limits_range
-        previous_actions = nn.Dense(features=32)(previous_actions)
-        previous_actions = nn.silu(previous_actions)
-        previous_actions = nn.BatchNorm(use_running_average=not train)(previous_actions)
-        x = nn.Dense(features=32)(state)
-        x = nn.silu(x)
-        x = nn.BatchNorm(use_running_average=not train)(x)
-        x = jnp.concatenate([x, previous_actions], axis=-1)
-        x = nn.SelfAttention(num_heads=8)(x)
-        x = nn.Dense(features=32)(x)
-        x = nn.silu(x)
-        x = nn.BatchNorm(use_running_average=not train)(x)
-        if carry is None:
-            carry = self.lstm.initialize_carry(
-                jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
-            )
-        # carry, x = self.lstm(carry, x)
-        # x = nn.PReLU()(x)
-        # x = nn.BatchNorm(use_running_average=not train)(x)
-        x = nn.SelfAttention(num_heads=8)(x)
-        x = nn.silu(x)
-        x = nn.BatchNorm(use_running_average=not train)(x)
-        x = x.reshape((batch_size, -1))
-        action = action / action_limits_range
-        action = nn.Dense(features=12)(action)
-        action = nn.silu(action)
-        x = jnp.concatenate([x, action], axis=-1)
-        q_1 = nn.Dense(features=32, name="Critic_1_1")(x)
-        q_2 = nn.Dense(features=32, name="Critic_2_1")(x)
-        q_2 = nn.Dropout(rate=0.2)(q_2, deterministic=not train)
-        q_1 = nn.silu(q_1)
-        q_2 = nn.silu(q_2)
-        q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
-        q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
-        
-        q_1 = nn.Dense(features=16, name="Critic_1_2")(q_1)
-        q_2 = nn.Dense(features=16, name="Critic_2_2")(q_2)
-        q_1 = nn.silu(q_1)
-        q_2 = nn.silu(q_2)
-        q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
-        q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
-        q_1 = nn.Dense(features=1)(x)
-        q_2 = nn.Dense(features=1)(x)
-        return q_1, q_2
+        # 2) concatenate action
+        sa = jnp.concatenate([x, action], axis=-1)    # (batch, t*h + action_dim)
+
+        # 3) first Q
+        q1 = sa
+        for hd in self.hidden_dims:
+            q1 = nn.Dense(hd, name=f"q1_fc{hd}")(q1)
+            q1 = nn.silu(q1)
+        q1 = nn.Dense(1, name="q1_out")(q1)
+
+        # 4) second Q
+        q2 = sa
+        for hd in self.hidden_dims:
+            q2 = nn.Dense(hd, name=f"q2_fc{hd}")(q2)
+            q2 = nn.silu(q2)
+        q2 = nn.Dense(1, name="q2_out")(q2)
+        y = nn.BatchNorm(use_running_average=not train)(q1)  # (batch, 1)
+        return q1, q2
+    
 
 sequence_length = 3
 resolution = 253
 number_particles = 30
-learning_rate = 1e-4
+learning_rate = 1e-3
 
 obs = srl.observables.Observable(0)
 task = srl.tasks.BallRacingTask()
@@ -217,7 +219,7 @@ sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(actio
 exploration_policy = srl.exploration_policies.GlobalOUExploration(
     drift=0.2, volatility=0.3, action_limits=action_limits, action_dimension=action_dimension
 )
-value_function = srl.value_functions.TDReturnsSAC(gamma=0.8, standardize=True)
+value_function = srl.value_functions.TDReturnsSAC(gamma=0.99, standardize=True)
 actor_network = srl.networks.ContinuousActionModel(
     flax_model=actor,
     optimizer=optimizer,
@@ -246,11 +248,11 @@ critic_network = srl.networks.ContinuousCriticModel(
 
 loss = srl.losses.SoftActorCriticGradientLoss(
     value_function=value_function,
-    minimum_entropy=-action_dimension,
-    polyak_averaging_tau=0.05,
+    minimum_entropy=-action_dimension*2,
+    polyak_averaging_tau=0.02,
     validation_split=0.1,
     fix_temperature=False,
-    batch_size=256,
+    batch_size=1024,
 )
 
 protocol = srl.agents.MPIActorCriticAgent(
@@ -268,8 +270,8 @@ engine = OfflineLearning()
 
 
 
-# protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_6")
+protocol.restore_agent(identifier=task.__class__.__name__)
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_1")
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
-reward = rl_trainer.perform_rl_training(engine, 1000, 10)
+reward = rl_trainer.perform_rl_training(engine, 10000, 10)

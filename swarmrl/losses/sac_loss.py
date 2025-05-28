@@ -216,8 +216,8 @@ class SoftActorCriticGradientLoss(Loss):
         # logger.info(
         #     f"mean actor grad = {mean_actor_grad}, mean critic grad = {mean_critic_grad}"
         # )
-        actor_grad["temperature"] = 0
-        assert actor_grad["temperature"] == 0
+        actor_grad["temperature"] = jnp.array([0.0])
+        # assert actor_grad["temperature"] == 0
 
         critic_network.update_model(
             critic_grad, updated_batch_stats=updated_batch_stats_critic
@@ -293,13 +293,14 @@ class SoftActorCriticGradientLoss(Loss):
         actor_loss = jnp.exp(log_temp) * log_probs - jnp.minimum(
             first_q_value, second_q_value
         )
-        # actor_loss += 1e-5 * sum(
-        #     jnp.sum(jnp.square(param))
-        #     for name, param in jax.tree_util.tree_flatten_with_path(actor_network_params)[0]
-        #     if "temperature" not in name
-        # )
+        l2_regularization = sum(
+            jnp.sum(jnp.square(param)) for param in jax.tree_util.tree_leaves(actor_network_params)
+        )
+        actor_loss += 1e-7 * l2_regularization
         variance = logits[:,6:]
-        actor_loss += 3e-2 * jnp.mean(variance)
+        actor_loss += 3e-8 * jnp.mean(variance)
+        mean = logits[:, :6]
+        actor_loss += 8e-8 * jnp.mean(jnp.square(mean))
         # actor_loss *= 0.5
         assert jnp.shape(actor_loss) == jnp.shape(first_q_value)
         return jnp.mean(actor_loss), (log_probs, actor_loss, updated_batch_stats_actor)
@@ -343,10 +344,10 @@ class SoftActorCriticGradientLoss(Loss):
         critic_loss = 1/2*((first_q_value - desired_q_value) ** 2 + (
             second_q_value - desired_q_value
         ) ** 2)
-        # l2_regularization = sum(
-        #     jnp.sum(jnp.square(param)) for param in jax.tree_util.tree_leaves(critic_network_params)
-        # )
-        # critic_loss += 1e-5 * l2_regularization
+        l2_regularization = sum(
+            jnp.sum(jnp.square(param)) for param in jax.tree_util.tree_leaves(critic_network_params)
+        )
+        critic_loss += 3e-7 * l2_regularization
         # critic_loss *= 0.3
         assert jnp.shape(critic_loss) == jnp.shape(desired_q_value)
         assert jnp.shape(critic_loss) == jnp.shape(first_q_value)
@@ -549,7 +550,18 @@ class SoftActorCriticGradientLoss(Loss):
         actor_training_loss = 0.0
         critic_training_loss = 0.0
         temperature_training_loss = 0.0
-        if feature_training.shape[0] >self.batch_size:
+
+        # Shuffle the data at the start of each pass
+        permutation = onp.random.permutation(feature_training.shape[0])
+        feature_training = feature_training[permutation]
+        next_feature_training = next_feature_training[permutation]
+        action_training = action_training[permutation]
+        reward_training = reward_training[permutation]
+        action_sequence_training = action_sequence_training[permutation]
+        carry_training = tuple(c[permutation] for c in carry_training)
+        next_carry_training = tuple(c[permutation] for c in next_carry_training)
+
+        if feature_training.shape[0] > self.batch_size:
             num_batches = feature_training.shape[0] // self.batch_size
 
             for batch_idx in range(num_batches + 1):

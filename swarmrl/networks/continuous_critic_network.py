@@ -406,6 +406,40 @@ class ContinuousCriticModel(Network, ABC):
         self.epoch_count = epoch
 
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
+        
+    def load_particle_preprocessor_params(self, filename: str, directory: str = "Models"):
+        """
+        Load only the parameters of the ParticlePreprocessor from a saved model.
+
+        Parameters
+        ----------
+        filename : str
+            Name of the model state file.
+        directory : str
+            Path to the model state file.
+
+        Updates
+        -------
+        Updates the ParticlePreprocessor parameters in the current model.
+        """
+        # Load the saved model state
+        with open(os.path.join(directory, filename + ".pkl"), "rb") as f:
+            model_params, _, _, _, _, _ = pickle.load(f)
+
+        # Extract ParticlePreprocessor parameters
+        particle_preprocessor_params = {
+            k: v for k, v in model_params.items() if "ParticlePreprocessor" in k
+        }
+
+        # Update the current model's ParticlePreprocessor parameters
+        current_params = self.critic_state.params
+        updated_params = {**current_params, **particle_preprocessor_params}
+        self.criitc_state = self.critic_state.replace(params=updated_params)
+        current_params = self.target_state.params
+        updated_params = {**current_params, **particle_preprocessor_params}
+        self.target_state = self.target_state.replace(params=updated_params)
+
+        logger.info("ParticlePreprocessor parameters successfully loaded.")
 
     def polyak_averaging(self, tau: float = 0.005):
         """

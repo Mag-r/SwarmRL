@@ -195,6 +195,16 @@ class ContinuousActionModel(Network, ABC):
         # Logging for grads and pre-train model state
         logger.debug(f"{grads=}")
         logger.debug(f"{self.model_state=}")
+
+        # Validate gradients
+        def validate_grad(grad):
+            if grad is None or not isinstance(grad, jnp.ndarray):
+                logger.error(f"Invalid gradient detected: {grad}")
+                return jnp.zeros_like(grad) if grad is not None else grad
+            return grad
+
+        grads = jax.tree_util.tree_map(validate_grad, grads)
+
         if isinstance(self.optimizer, dict):
             raise NotImplementedError
         else:
@@ -391,6 +401,37 @@ class ContinuousActionModel(Network, ABC):
         # self.carry = carry
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
 
+    def load_particle_preprocessor_params(self, filename: str, directory: str = "Models"):
+        """
+        Load only the parameters of the ParticlePreprocessor from a saved model.
+
+        Parameters
+        ----------
+        filename : str
+            Name of the model state file.
+        directory : str
+            Path to the model state file.
+
+        Updates
+        -------
+        Updates the ParticlePreprocessor parameters in the current model.
+        """
+        # Load the saved model state
+        with open(os.path.join(directory, filename + ".pkl"), "rb") as f:
+            model_params, _, _, _, _, _ = pickle.load(f)
+
+        # Extract ParticlePreprocessor parameters
+        particle_preprocessor_params = {
+            k: v for k, v in model_params.items() if "ParticlePreprocessor" in k
+        }
+
+        # Update the current model's ParticlePreprocessor parameters
+        current_params = self.model_state.params
+        updated_params = {**current_params, **particle_preprocessor_params}
+        self.model_state = self.model_state.replace(params=updated_params)
+
+        logger.info("ParticlePreprocessor parameters successfully loaded.")
+
     def get_exp_temperature(self) -> float:
         """
         Get the temperature of the model.
@@ -432,14 +473,3 @@ class ContinuousActionModel(Network, ABC):
             )
         logits = logits.squeeze()
         return logits
-        
-
-    def get_exp_temperature(self):
-        """
-        Get the temperature of the model.
-
-        Returns
-        -------
-        float : temperature of the model.
-        """
-        return jnp.exp(self.model_state.params["temperature"])

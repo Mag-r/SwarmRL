@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6340
+    labview_port = 6344
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  
@@ -58,7 +58,7 @@ class GauravExperiment(Engine):
             self.server_connection, _ = self.labview_publisher.accept()
             self.server_connection.settimeout(0.001)
 
-            logger.info("Connection established")
+            logger.info("Connected!")
 
             # Send TDMS filename if required
             self.send_message(self.TDMS_file_name)
@@ -148,7 +148,7 @@ class GauravExperiment(Engine):
         seperation_action = MPIAction(
             magnitude=[100, 100], frequency=[30, 30], keep_magnetic_field=10
         )
-        self.send_action(seperation_action)
+        # self.send_action(seperation_action)
         time.sleep(10)
         pass
 
@@ -159,7 +159,7 @@ class GauravExperiment(Engine):
             force_model.set_training_mode(True)
             action = force_model.calc_action(None)
             action = MPIAction(
-                magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=1, gradient=action[4:6]
+                magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=3, gradient=action[4:6]
             )
             self.send_action(action)
             time.sleep(float(action.keep_magnetic_field) * 0.95)

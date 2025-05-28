@@ -207,14 +207,14 @@ class BaslerCameraObservable(Observable, ABC):
         positions = self.extract_positions(image)
         if positions.shape[1] < self.number_particles:
             padding = self.number_particles - positions.shape[1]
-            padding = np.zeros((1, padding, 2))
+            padding = positions[:, :padding, :].copy()
             positions = np.concatenate((positions, padding), axis=1)
         elif positions.shape[1] > self.number_particles:
             positions = positions[:, : self.number_particles, :]
-        positions = np.concatenate((positions, self.com_velocity), axis=1)
         positions = np.concatenate((positions, self.com_position), axis=1)
-        positions = np.concatenate((positions, self.blue_ball_velocity), axis=1)
         positions = np.concatenate((positions, self.blue_ball_position), axis=1)
+        positions = np.concatenate((positions, self.com_velocity), axis=1)
+        positions = np.concatenate((positions, self.blue_ball_velocity), axis=1)
         return positions
 
     def track_blue_ball(self, image: onp.ndarray):

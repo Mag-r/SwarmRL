@@ -55,7 +55,7 @@ sequence_length = 3
 resolution = 253
 
 number_particles = 30
-learning_rate = 3e-3
+learning_rate = 1e-3
 
 obs = BaslerCameraObservable(
     [resolution, resolution], Autoencoder(), model_path="Models/autoencoder_5_9.pkl", number_particles=number_particles
@@ -99,8 +99,8 @@ protocol = setupNetwork.defineRLAgent(
 )
 
 protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_4")
-# protocol.actor_network.set_temperature(0.02)
+# protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_7")
+# protocol.actor_network.set_temperature(1E-3)
 rl_trainer = Trainer([protocol], lock=lock, deployment_mode=learning_rate == 0.0)
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(experiment, 1000, 10)
