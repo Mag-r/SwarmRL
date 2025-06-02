@@ -32,59 +32,117 @@ from flax import linen as nn
 from typing import Tuple, Any
 
 class ParticlePreprocessor(nn.Module):
-    """Embed each particle, apply self-attention over the n_particles dimension,
-       and pool to a per-time-step feature."""
+    """DeepSets + GCN‐style preprocessor:
+       1) Per‐particle MLP (shared),
+       2) Mean pooling (DeepSets),
+       3) One GCN layer over fully connected graph,
+       4) Final concatenation with velocity features.
+    """
     hidden_dim: int = 64
-    num_heads: int = 8
+    gcn_hidden: int = 64
+    num_particles: int = 30         # total particles (including velocity slots)
+    dropout_rate: float = 0.1
 
     @nn.compact
-    def __call__(self, state: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self,
+                 state: jnp.ndarray,
+                 train: bool = False) -> jnp.ndarray:
         """
         Args:
-            state: shape (batch, time, n_particles, dim)
+          state: shape (batch, time, n_particles, dim)
+                 (e.g. n_particles=32 if last 2 are velocity “particles”)
         Returns:
-            features: shape (batch, time, hidden_dim)
+          features: shape (batch, time, hidden_dim + velocity_dim)
         """
-        # Separate velocity from position
-        position = state[:, :, :-2, :]  # Exclude last two entries (velocity)
-        velocity = state[:, :, -2:, :]  # Only last two entries (velocity)
+        # ────────────────────────────────────────────────────────────────────────
+        # 1) Split positions vs. velocity “particles”
+        #    (Here we assume the last 2 “particles” encode velocity in some form.)
+        pos = state[:, :, :-2, :]    # shape (B, T, Npos= n_p-2, Dpos)
+        vel = state[:, :, -2:, :]    # shape (B, T, 2, Dvel)
+        b, t, n_pos, d_pos = pos.shape
 
-        # Process position
-        b, t, n, d = position.shape
-        x = position.reshape(b * t, n, d)
-        x = nn.Dense(self.hidden_dim)(x)          # (b*t, n, hidden_dim)
-        x = nn.silu(x)
-        x = nn.LayerNorm()(x)
-        x = nn.SelfAttention(
-            num_heads=self.num_heads,
-            qkv_features=self.hidden_dim,
-            out_features=self.hidden_dim,
-        )(x)                                 # (b*t, n, hidden_dim)
-        x = nn.silu(x)
-        x = nn.LayerNorm()(x)
-        x = jnp.mean(x, axis=1)                   # (b*t, hidden_dim)
-        position_features = x.reshape(b, t, self.hidden_dim)   # (batch, time, hidden_dim)
+        # ────────────────────────────────────────────────────────────────────────
+        # 2) DeepSets per‐particle MLP (shared):
+        #    Apply same small MLP to each particle
+        def per_particle_mlp(x):
+            x = nn.Dense(self.hidden_dim,
+                         kernel_init=nn.initializers.kaiming_normal())(x)
+            x = nn.silu(x)
+            x = nn.Dense(self.hidden_dim,
+                         kernel_init=nn.initializers.kaiming_normal())(x)
+            x = nn.silu(x)
+            return x
 
-        # Process velocity
-        velocity = velocity.reshape(b * t, -1)  # Flatten velocity
-        velocity_features = nn.Dense(8)(velocity)
-        velocity_features = nn.silu(velocity_features)
-        velocity_features = nn.LayerNorm()(velocity_features)
-        velocity_features = velocity_features.reshape(b, t, -1)
+        # Flatten batch & time so we can vmap over particles easily
+        x = pos.reshape(b * t, n_pos, d_pos)   # (B*T, Npos, Dpos)
+        # Apply shared MLP to each particle
+        x = jax.vmap(per_particle_mlp, in_axes=1, out_axes=1)(x)
+        # Now x has shape (B*T, Npos, hidden_dim)
 
-        # Concatenate position and velocity features
-        return jnp.concatenate([position_features, velocity_features], axis=-1)
+        # ────────────────────────────────────────────────────────────────────────
+        # 3) DeepSets pooling (mean over particles)
+        x_mean = jnp.mean(x, axis=1)           # (B*T, hidden_dim)
+
+        # ────────────────────────────────────────────────────────────────────────
+        # 4) One GCN layer over fully connected graph of particles
+        #    We build a simple adjacency: all pairwise edges (no self‐loops)
+        #    GCN update: h_i' = σ( Σ_j W_edge * h_j + W_self * h_i )
+        h = x  # (B*T, Npos, hidden_dim)
+        W_edge = self.param("W_edge",
+                            nn.initializers.kaiming_normal(),
+                            (self.hidden_dim, self.gcn_hidden))
+        W_self = self.param("W_self",
+                            nn.initializers.kaiming_normal(),
+                            (self.hidden_dim, self.gcn_hidden))
+        # Expand so we can do pairwise sums
+        h_i = jnp.expand_dims(h, 2)            # (B*T, Npos, 1, hidden_dim)
+        h_j = jnp.expand_dims(h, 1)            # (B*T, 1, Npos, hidden_dim)
+        # Sum neighbor features (including all j ≠ i)
+        neighbor_sum = jnp.sum(h_j, axis=2)    # (B*T, Npos, hidden_dim)
+        # GCN linear transforms
+        out_edge = neighbor_sum @ W_edge        # (B*T, Npos, gcn_hidden)
+        out_self = h @ W_self                   # (B*T, Npos, gcn_hidden)
+        h_gcn = nn.silu(out_edge + out_self)
+        h_gcn = nn.LayerNorm()(h_gcn)
+
+        # Pool GCN outputs similarly (mean)
+        h_gcn_mean = jnp.mean(h_gcn, axis=1)   # (B*T, gcn_hidden)
+
+        # ────────────────────────────────────────────────────────────────────────
+        # 5) Combine DeepSets + GCN pooled features
+        combined = jnp.concatenate([x_mean, h_gcn_mean], axis=-1)  # (B*T, hidden_dim + gcn_hidden)
+        combined = nn.Dense(self.hidden_dim,
+                            kernel_init=nn.initializers.kaiming_normal())(combined)
+        combined = nn.silu(combined)
+        combined = nn.LayerNorm()(combined)
+        combined = nn.Dropout(rate=self.dropout_rate)(combined, deterministic=not train)
+        combined = combined.reshape(b, t, -1)   # (B, T, hidden_dim)
+
+        # ────────────────────────────────────────────────────────────────────────
+        # 6) Process velocity features (shared MLP)
+        v = vel.reshape(b * t, -1)              # (B*T, 2 * Dvel)
+        v = nn.Dense(16,
+                     kernel_init=nn.initializers.kaiming_normal())(v)
+        v = nn.silu(v)
+        v = nn.LayerNorm()(v)
+        v = nn.Dropout(rate=self.dropout_rate)(v, deterministic=not train)
+        v = v.reshape(b, t, -1)                 # (B, T, 16)
+
+        # ────────────────────────────────────────────────────────────────────────
+        # 7) Final concatenation
+        return jnp.concatenate([combined, v], axis=-1)  # (B, T, hidden_dim + 16)
 
 
 class ActorNet(nn.Module):
-    """SAC Gaussian actor producing mean & log-std, keeps your original signature."""
-    preprocessor: Any  # e.g. ParticlePreprocessor()
-    hidden_dims: Tuple[int, ...] = (128, 128)
-    log_std_min: float = -5.0
-    log_std_max: float = 1.0
+    """SAC Gaussian actor with DeepSets+GCN preprocessor."""
+    preprocessor: Any          # ParticlePreprocessor(shared)
+    hidden_dims: Tuple[int, ...] = (128, 64)
+    log_std_min: float = -10.0
+    log_std_max: float = 0.5
+    dropout_rate: float = 0.1
+
     
     def setup(self):
-        # Define a scanned LSTM cell
         self.ScanLSTM = nn.scan(
             nn.OptimizedLSTMCell,
             variable_broadcast="params",
@@ -93,57 +151,57 @@ class ActorNet(nn.Module):
             out_axes=1,
         )
         self.lstm = self.ScanLSTM(features=2)
-        temperature = self.param(
-            "temperature", lambda key, shape: jnp.full(shape, jnp.log(1)), (1,)
-        )
-
+        self.temperature = self.param("temperature", lambda key, shape: jnp.full(shape, jnp.log(1)), (1,))
 
     @nn.compact
     def __call__(self,
                  state: jnp.ndarray,
                  previous_actions: jnp.ndarray,
                  carry: Any = None,
-                 train: bool = False
-                 ) -> Tuple[jnp.ndarray, Any]:
-        """
-        Args:
-          state:            (batch, time, n_particles, dim)
-          previous_actions: (batch, time, action_dim)  # unused atm
-        Returns:
-          concat of (mu, log_std): shape (batch, action_dim*2), and carry (None)
-        """
+                 train: bool = False) -> Tuple[jnp.ndarray, Any]:
         if carry is None:
             carry = self.lstm.initialize_carry(
                 jax.random.PRNGKey(0), state.shape[:1] + state.shape[2:]
             )
-        # 1) preprocess
-        x = self.preprocessor(state / 253.0)            # (batch, time, hidden_dim)
+        # 1) Preprocess (b, t, hidden_dim + 16)
+        x = self.preprocessor(state / 253.0, train=train)
+        b, t, f = x.shape
+        x = x.reshape(b, t * f)   # flatten time & features
 
-        # 2) flatten time & features
-        b, t, h = x.shape
-        x = x.reshape(b, t * h)
-
-        # 3) MLP
+        # 2) MLP with Dropout & L2 on weights
         for hd in self.hidden_dims:
-            x = nn.Dense(hd)(x)
+            x = nn.Dense(
+                hd,
+                kernel_init=nn.initializers.kaiming_normal(),
+                bias_init=nn.initializers.zeros
+            )(x)
             x = nn.silu(x)
             x = nn.LayerNorm()(x)
+            x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=not train)
+        
+        # 3) Output mu & log_std
+        mu = nn.Dense(
+            action_dimension,
+            kernel_init=nn.initializers.orthogonal(1e-2),
+            bias_init=nn.initializers.zeros,
+        )(x)
+        mu = jnp.tanh(mu) * 3.0    # squash into [-3, 3] for example
 
-        # 4) outputs
-        mu      = nn.Dense(action_dimension)(x)
-        log_std = nn.Dense(action_dimension)(x)
+        log_std = nn.Dense(
+            action_dimension,
+            kernel_init=nn.initializers.orthogonal(1e-2),
+            bias_init=nn.initializers.zeros,
+        )(x)
         log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
 
-        # 5) concat so you still return a single tensor and carry
-        out = jnp.concatenate([mu, log_std], axis=-1)  # (batch, action_dim*2)
-        y = nn.BatchNorm(use_running_average=not train)(out)  # (batch, action_dim*2)
+        out = jnp.concatenate([mu, log_std], axis=-1)  # (b, action_dim*2)
+        y = nn.BatchNorm(use_running_average=not train)(out)
         return out, carry
-
-
 class CriticNet(nn.Module):
-    """Twin Q-networks for SAC, keeps your original signature."""
-    preprocessor: Any  # e.g. ParticlePreprocessor()
+    """Twin‐Q SAC critic with DeepSets+GCN preprocessor."""
+    preprocessor: Any
     hidden_dims: Tuple[int, ...] = (128, 64)
+    dropout_rate: float = 0.1
 
     @nn.compact
     def __call__(self,
@@ -151,47 +209,46 @@ class CriticNet(nn.Module):
                  previous_actions: jnp.ndarray,
                  action: jnp.ndarray,
                  carry: Any = None,
-                 train: bool = False
-                 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        """
-        Args:
-          state:            (batch, time, n_particles, dim)
-          previous_actions: (batch, time, action_dim)  # unused atm
-          action:           (batch, action_dim)
-        Returns:
-          q1, q2 each of shape (batch, 1)
-        """
-        # 1) preprocess
-        x = self.preprocessor(state / 253.0)            # (batch, time, hidden_dim)
-        b, t, h = x.shape
-        x = x.reshape(b, t * h)                       # (batch, t*h)
-        action_limits_range = action_limits[:, 1] - action_limits[:, 0]
-        action = action / action_limits_range          # (batch, action_dim)
+                 train: bool = False) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        # 1) Preprocess
+        x = self.preprocessor(state / 253.0, train=train)  # (b, t, f)
+        b, t, f = x.shape
+        x = x.reshape(b, t * f)                             # (b, t*f)
 
-        # 2) concatenate action
-        sa = jnp.concatenate([x, action], axis=-1)    # (batch, t*h + action_dim)
+        # 2) Normalize action to [−1,1] or similar
+        a_norm = (action - action_limits[:, 0]) / (action_limits[:, 1] - action_limits[:, 0])
+        sa = jnp.concatenate([x, a_norm], axis=-1)          # (b, t*f + action_dim)
 
-        # 3) first Q
-        q1 = sa
-        for hd in self.hidden_dims:
-            q1 = nn.Dense(hd, name=f"q1_fc{hd}")(q1)
-            q1 = nn.silu(q1)
-        q1 = nn.Dense(1, name="q1_out")(q1)
+        # 3) Twin Q‐networks with shared MLP trunk, then separate heads
+        def q_branch(name: str):
+            y = sa
+            for hd in self.hidden_dims:
+                y = nn.Dense(
+                    hd,
+                    kernel_init=nn.initializers.kaiming_normal(),
+                    bias_init=nn.initializers.zeros,
+                    name=f"{name}_fc{hd}"
+                )(y)
+                y = nn.silu(y)
+                y = nn.LayerNorm()(y)
+                y = nn.Dropout(rate=self.dropout_rate)(y, deterministic=not train)
+            q = nn.Dense(
+                1,
+                kernel_init=nn.initializers.orthogonal(1e-2),
+                bias_init=nn.initializers.zeros,
+                name=f"{name}_out"
+            )(y)
+            return q
 
-        # 4) second Q
-        q2 = sa
-        for hd in self.hidden_dims:
-            q2 = nn.Dense(hd, name=f"q2_fc{hd}")(q2)
-            q2 = nn.silu(q2)
-        q2 = nn.Dense(1, name="q2_out")(q2)
-        y = nn.BatchNorm(use_running_average=not train)(q1)  # (batch, 1)
+        q1 = q_branch("q1")
+        q2 = q_branch("q2")
+        z = nn.BatchNorm(use_running_average=not train)(q1)
         return q1, q2
-    
 
-sequence_length = 3
+sequence_length = 1
 resolution = 253
 number_particles = 30
-learning_rate = 1e-3
+learning_rate = 3e-4
 
 obs = srl.observables.Observable(0)
 task = srl.tasks.BallRacingTask()
@@ -271,7 +328,9 @@ engine = OfflineLearning()
 
 
 protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_1")
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_9")
+# protocol.actor_network.set_temperature(1E-3)
+
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(engine, 10000, 10)

@@ -69,11 +69,11 @@ class BallRacingTask(Task):
             self.moved_back = False
             self.visited_tiles = set()
         self.moved_back = reward < 0 if not self.moved_back else self.moved_back # if true once it keeps true
-        reward -= 0.1
-        if self.previous_tile_com == current_tile_com:
+        if self.previous_tile_com == current_tile_com or self.previous_tile_ball == current_tile_ball:
             self.time_on_current_tile += 1
+            reward -= 0.2
             if self.time_on_current_tile > 10:
-                reward -= 10
+                reward -= 0.5
                 self.time_on_current_tile = 0
         else:
             self.time_on_current_tile = 0
