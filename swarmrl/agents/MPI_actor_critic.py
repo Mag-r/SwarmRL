@@ -3,7 +3,10 @@ Module for the Actor-Critic RL protocol.
 """
 
 import logging
+import os
+import pickle
 import typing
+from threading import Lock
 
 import jax
 import numpy as np
@@ -18,9 +21,6 @@ from swarmrl.networks.network import Network
 from swarmrl.observables.observable import Observable
 from swarmrl.tasks.task import Task
 from swarmrl.utils.colloid_utils import GlobalTrajectoryInformation
-import os
-import pickle
-from threading import Lock
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ class MPIActorCriticAgent(Agent):
         intrinsic_reward: IntrinsicReward = None,
         max_samples_in_trajectory: int = 200,
         lock: Lock = Lock(),
+        resolution_map: int = 64,
     ):
         """
         Constructor for the actor-critic protocol.
@@ -81,6 +82,7 @@ class MPIActorCriticAgent(Agent):
         # Trajectory to be updated.
         self.trajectory = GlobalTrajectoryInformation()
         self.max_samples_in_trajectory = max_samples_in_trajectory
+        self.resolution_map = resolution_map
 
     def __name__(self) -> str:
         """
@@ -213,7 +215,9 @@ class MPIActorCriticAgent(Agent):
         self.trajectory.next_carry = trajectory_data["next_carry"]
         self.trajectory.action_sequence = trajectory_data["action_sequence"]
         self.trajectory.killed = trajectory_data["killed"]
-        logger.info(f"shape of all features: {np.shape(self.trajectory.features)}, shape of all actions: {np.shape(self.trajectory.actions)}, shape of all rewards: {np.shape(self.trajectory.rewards)}")
+        logger.info(
+            f"shape of all features: {np.shape(self.trajectory.features)}, shape of all actions: {np.shape(self.trajectory.actions)}, shape of all rewards: {np.shape(self.trajectory.rewards)}"
+        )
 
     def remove_old_data(self, remove: int = -1):
         """Remove old data from the trajectory. The last 10 are always kept.
@@ -221,9 +225,13 @@ class MPIActorCriticAgent(Agent):
         Args:
             remove (int): Number of elements to remove.
         """
-        logger.info(f"shape of all features: {np.shape(self.trajectory.features)}, shape of all actions: {np.shape(self.trajectory.actions)}, shape of all rewards: {np.shape(self.trajectory.rewards)}, shape of feature sequence{np.shape(self.trajectory.feature_sequence)}, shape of action sequence{np.shape(self.trajectory.action_sequence)}, shape of next features{np.shape(self.trajectory.next_features)}")
+        logger.info(
+            f"shape of all features: {np.shape(self.trajectory.features)}, shape of all actions: {np.shape(self.trajectory.actions)}, shape of all rewards: {np.shape(self.trajectory.rewards)}, shape of feature sequence{np.shape(self.trajectory.feature_sequence)}, shape of action sequence{np.shape(self.trajectory.action_sequence)}, shape of next features{np.shape(self.trajectory.next_features)}"
+        )
         if remove == -1:
-            remove = len(self.trajectory.feature_sequence) - self.max_samples_in_trajectory
+            remove = (
+                len(self.trajectory.feature_sequence) - self.max_samples_in_trajectory
+            )
         if remove > 0 and self.loss.error_predicted_reward is not None:
             indices = np.arange(len(self.loss.error_predicted_reward))
             probabilities = jnp.array(self.loss.error_predicted_reward)
@@ -252,6 +260,14 @@ class MPIActorCriticAgent(Agent):
                 for i in selected_indices
                 if i < len(self.trajectory.next_features)
             ]
+            self.trajectory.occupancy_map = [
+                self.trajectory.occupancy_map[i] for i in selected_indices
+            ]
+            self.trajectory.next_occupancy_map = [
+                self.trajectory.next_occupancy_map[i]
+                for i in selected_indices
+                if i < len(self.trajectory.next_occupancy_map)
+            ]
             self.trajectory.features = self.trajectory.features[:, selected_indices]
             self.trajectory.carry = [self.trajectory.carry[i] for i in selected_indices]
             self.trajectory.next_carry = [
@@ -266,8 +282,9 @@ class MPIActorCriticAgent(Agent):
             self.trajectory.rewards = [
                 self.trajectory.rewards[i] for i in selected_indices
             ]
-            logger.info(f"AFter removing:: shape of all features: {np.shape(self.trajectory.features)}, shape of all actions: {np.shape(self.trajectory.actions)}, shape of all rewards: {np.shape(self.trajectory.rewards)}, shape of feature sequence{np.shape(self.trajectory.feature_sequence)}, shape of action sequence{np.shape(self.trajectory.action_sequence)}, shape of next features{np.shape(self.trajectory.next_features)}")
-
+            logger.info(
+                f"AFter removing:: shape of all features: {np.shape(self.trajectory.features)}, shape of all actions: {np.shape(self.trajectory.actions)}, shape of all rewards: {np.shape(self.trajectory.rewards)}, shape of feature sequence{np.shape(self.trajectory.feature_sequence)}, shape of action sequence{np.shape(self.trajectory.action_sequence)}, shape of next features{np.shape(self.trajectory.next_features)}"
+            )
 
     def initialize_network(self):
         """
@@ -357,7 +374,7 @@ class MPIActorCriticAgent(Agent):
         ----------
         colloids : List[Colloid]
                 List of colloids in the system.
-                
+
         Returns
         -------
         action : List[Action]
@@ -368,10 +385,11 @@ class MPIActorCriticAgent(Agent):
             colloids = latest_observation  # For experiments without colloids.
         previous_carry = self.actor_network.carry
         previous_actions = self.assemble_previous_actions()
-
+        occupancy_map = self.add_occupancy_map(colloids)
         action = self.actor_network.compute_action(
             observables=np.array(state_description),
             previous_actions=np.array(previous_actions),
+            occupancy_map=occupancy_map,
         )[np.newaxis, np.shape(state_description)[0] - 1]
         next_carry = self.actor_network.carry
         # Update the trajectory information.
@@ -379,6 +397,7 @@ class MPIActorCriticAgent(Agent):
         if self.train:
             with self.lock:
                 self.trajectory.feature_sequence.append(state_description)
+                self.trajectory.occupancy_map.append(occupancy_map)
                 self.trajectory.carry.append(previous_carry)
 
                 previous_actions = np.append(
@@ -395,6 +414,7 @@ class MPIActorCriticAgent(Agent):
                 self.trajectory.killed = self.task.kill_switch
                 if len(self.trajectory.feature_sequence) > 1:
                     self.trajectory.next_features.append(state_description)
+                    self.trajectory.next_occupancy_map.append(occupancy_map)
                     self.trajectory.next_carry.append(next_carry)
         self.kill_switch = self.task.kill_switch
         return np.squeeze(action)
@@ -402,7 +422,7 @@ class MPIActorCriticAgent(Agent):
     def assemble_previous_actions(self) -> np.ndarray:
         """Orders the previous actions to be used in the network.
         If the trajectory is smaller than the sequence length, it
-        fills the previous actions with zeros.  
+        fills the previous actions with zeros.
 
         Returns:
             np.ndarray: Previous actions to be used in the network.
@@ -447,9 +467,9 @@ class MPIActorCriticAgent(Agent):
             self.trajectory.features = latest_observable
         else:
             with self.lock:
-                    self.trajectory.features = np.append(
-                        self.trajectory.features, latest_observable, axis=1
-                    )
+                self.trajectory.features = np.append(
+                    self.trajectory.features, latest_observable, axis=1
+                )
 
         if self.trajectory.features.shape[1] >= self.actor_network.sequence_length:
             state_description = self.trajectory.features[
@@ -470,3 +490,45 @@ class MPIActorCriticAgent(Agent):
             )
 
         return state_description, latest_observable
+
+    def add_occupancy_map(self, colloids: typing.List[Colloid]):
+        """
+        Add an occupancy map to the trajectory.
+
+        Parameters
+        ----------
+        colloids : List[Colloid]
+                List of colloids in the system.
+        occupancy_map : jnp.ndarray
+                Occupancy map to add.
+        """
+
+        with self.lock:
+            if self.trajectory.occupancy_map.size == 0:
+                x = self.trajectory.features[0, -1, :, 0]
+                y = self.trajectory.features[0, -1, :, 1]
+
+                x = (x * self.resolution_map / self.observable.resolution[0]).astype(
+                    int
+                )
+                y = (y * self.resolution_map / self.observable.resolution[1]).astype(
+                    int
+                )
+                occupancy_map = np.zeros(
+                    (self.resolution_map, self.resolution_map), dtype=np.int32
+                )
+                occupancy_map[x, y] += 1
+
+            else:
+                x = self.trajectory.features[0, -1, :, 0]
+                y = self.trajectory.features[0, -1, :, 1]
+
+                x = (x * self.resolution_map / self.observable.resolution[0]).astype(
+                    int
+                )
+                y = (y * self.resolution_map / self.observable.resolution[1]).astype(
+                    int
+                )
+                occupancy_map = self.trajectory.occupancy_map[-1].copy()
+                occupancy_map[x, y] += 1
+        return occupancy_map[np.newaxis, ...]

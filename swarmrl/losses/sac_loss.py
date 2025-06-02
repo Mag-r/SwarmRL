@@ -85,6 +85,8 @@ class SoftActorCriticGradientLoss(Loss):
         rewards: jnp.ndarray,
         actions: jnp.ndarray,
         action_sequence: jnp.ndarray,
+        occupancy_map: jnp.ndarray,
+        next_occupancy_map: jnp.ndarray,
     ):
         log_temp = actor_network_params["temperature"]
         desired_q_value, updated_batch_stats_target = self._calculate_desired_q_value(
@@ -96,6 +98,7 @@ class SoftActorCriticGradientLoss(Loss):
             rewards,
             action_sequence,
             log_temp,
+            next_occupancy_map,
         )
         (
             critic_loss,
@@ -108,6 +111,7 @@ class SoftActorCriticGradientLoss(Loss):
             actions,
             action_sequence,
             desired_q_value,
+            occupancy_map,
         )
         (
             actor_loss,
@@ -121,6 +125,7 @@ class SoftActorCriticGradientLoss(Loss):
             carry,
             action_sequence,
             jax.lax.stop_gradient(log_temp),
+            occupancy_map,
         )
         temperature_loss = self._calculate_temperature_loss(
             actor_network_params, log_probs
@@ -141,6 +146,8 @@ class SoftActorCriticGradientLoss(Loss):
         rewards: jnp.ndarray,
         actions: jnp.ndarray,
         action_sequence: jnp.ndarray,
+        occupancy_map: jnp.ndarray,
+        next_occupancy_map: jnp.ndarray,
     ) -> jnp.array:
         """
         Compute the loss of the shared actor-critic network.
@@ -176,6 +183,7 @@ class SoftActorCriticGradientLoss(Loss):
             rewards,
             action_sequence,
             log_temp,
+            next_occupancy_map,
         )
 
         (
@@ -189,6 +197,7 @@ class SoftActorCriticGradientLoss(Loss):
             actions,
             action_sequence,
             desired_q_value,
+            occupancy_map,
         )
 
         # line 14
@@ -204,6 +213,7 @@ class SoftActorCriticGradientLoss(Loss):
             carry,
             action_sequence,
             jax.lax.stop_gradient(log_temp),
+            occupancy_map,
         )
         error_predicted_reward = jnp.squeeze(
             jnp.abs(critic_loss_per_sample) + jnp.abs(actor_loss_per_sample)
@@ -260,6 +270,7 @@ class SoftActorCriticGradientLoss(Loss):
         carry: tuple,
         action_sequence: jnp.ndarray,
         log_temp: jnp.ndarray,
+        occupancy_map: jnp.ndarray,
     ) -> tuple[float, tuple]:
         """Calculates the actor loss. Eq 7 in SAC-paper.
 
@@ -278,7 +289,7 @@ class SoftActorCriticGradientLoss(Loss):
         """
         actions, log_probs, updated_batch_stats_actor, logits = (
             actor_network.compute_action_training(
-                actor_network_params, feature_data, action_sequence[:, :-1, :], carry
+                actor_network_params, feature_data, action_sequence[:, :-1, :], occupancy_map, carry
             )
         )
         first_q_value, second_q_value, _ = critic_network.compute_q_values_critic(
@@ -286,6 +297,7 @@ class SoftActorCriticGradientLoss(Loss):
             feature_data,
             actions,
             action_sequence[:, :-1, :],
+            occupancy_map,
             carry,
         )
         log_probs = jnp.expand_dims(log_probs, axis=-1)
@@ -315,6 +327,7 @@ class SoftActorCriticGradientLoss(Loss):
         actions: jnp.ndarray,
         action_sequence: jnp.ndarray,
         desired_q_value: jnp.ndarray,
+        occupancy_map: jnp.ndarray,
     ) -> tuple[float, tuple]:
         """Calculates the critic loss. Eq 5 in SAC-paper.
 
@@ -337,6 +350,7 @@ class SoftActorCriticGradientLoss(Loss):
                 feature_data,
                 actions,
                 action_sequence[:, :-1, :],
+                occupancy_map,
                 carry,
             )
         )
@@ -371,6 +385,7 @@ class SoftActorCriticGradientLoss(Loss):
         rewards,
         action_sequence,
         log_temp,
+        next_occupancy_map,
     ):
         """Calculates the desired Q value, to be used in the critic loss. Eq 5 in SAC-paper.
 
@@ -392,6 +407,7 @@ class SoftActorCriticGradientLoss(Loss):
             actor_network_params,
             next_feature_data,
             action_sequence[:, 1:, :],
+            next_occupancy_map,
             next_carry,
         )
         next_log_probs = jnp.expand_dims(next_log_probs, axis=-1)
@@ -400,6 +416,7 @@ class SoftActorCriticGradientLoss(Loss):
                 next_feature_data,
                 next_action,
                 action_sequence[:, 1:, :],
+                next_occupancy_map,
                 next_carry,
             )
         )
@@ -501,6 +518,8 @@ class SoftActorCriticGradientLoss(Loss):
                 :iterations_next
             ].copy()
             next_carry_data = jnp.array(episode_data.next_carry).copy()
+            occupancy_map = jnp.array(episode_data.occupancy_map).copy()
+            next_occupancy_map = jnp.array(episode_data.next_occupancy_map).copy()
 
         feature_data = feature_data.reshape(
             (iterations * n_particles, *feature_dimension)
@@ -508,11 +527,20 @@ class SoftActorCriticGradientLoss(Loss):
         next_feature_data = next_feature_data.reshape(
             ((iterations_next) * n_particles, *feature_dimension)
         )
+
         if jnp.shape(reward_data)[0] != iterations_next:
+            logger.warning(
+                f"reward_data shape {jnp.shape(reward_data)} does not match next_feature_data shape {jnp.shape(next_feature_data)}"
+            )
             iterations -= 1
             iterations_next -= 1
             next_feature_data = next_feature_data[:iterations_next]
             feature_data = feature_data[:iterations]
+            actions = actions[:iterations_next]
+            action_sequence = action_sequence[:iterations_next]
+            occupancy_map = occupancy_map[:iterations]
+            next_occupancy_map = next_occupancy_map[:iterations_next]
+
         assert (
             (jnp.shape(feature_data)[0] == iterations_next)
             and (jnp.shape(next_feature_data)[0] == iterations_next)
@@ -532,6 +560,12 @@ class SoftActorCriticGradientLoss(Loss):
         )
         action_sequence_training, action_sequence_validation = (
             self._split_training_validation(action_sequence)
+        )
+        occupancy_map_training, occupancy_map_validation = self._split_training_validation(
+            occupancy_map
+        )
+        next_occupancy_map_training, next_occupancy_map_validation = (
+            self._split_training_validation(next_occupancy_map)
         )
         carry = jnp.squeeze(carry)[:iterations_next]
         carry_training, carry_validation = self._split_training_validation(carry)
@@ -558,6 +592,8 @@ class SoftActorCriticGradientLoss(Loss):
         action_training = action_training[permutation]
         reward_training = reward_training[permutation]
         action_sequence_training = action_sequence_training[permutation]
+        occupancy_map_training = occupancy_map_training[permutation]
+        next_occupancy_map_training = next_occupancy_map_training[permutation]
         carry_training = tuple(c[permutation] for c in carry_training)
         next_carry_training = tuple(c[permutation] for c in next_carry_training)
 
@@ -573,6 +609,8 @@ class SoftActorCriticGradientLoss(Loss):
                 action_batch = action_training[batch_start:batch_end]
                 reward_batch = reward_training[batch_start:batch_end]
                 action_sequence_batch = action_sequence_training[batch_start:batch_end]
+                occupancy_map_batch = occupancy_map_training[batch_start:batch_end]
+                next_occupancy_map_batch = next_occupancy_map_training[batch_start:batch_end]
                 carry_batch = tuple(c[batch_start:batch_end] for c in carry_training)
                 next_carry_batch = tuple(c[batch_start:batch_end] for c in next_carry_training)
 
@@ -589,6 +627,8 @@ class SoftActorCriticGradientLoss(Loss):
                     rewards=reward_batch,
                     actions=action_batch,
                     action_sequence=action_sequence_batch,
+                    occupancy_map=occupancy_map_batch,
+                    next_occupancy_map=next_occupancy_map_batch,
                 )
                 )
                 # logger.info(f"batch {batch_idx} actor training loss = {batched_actor_training_loss}, critic training loss = {batched_critic_training_loss}, temperature training loss = {batched_temperature_trainig_loss}")
@@ -616,6 +656,8 @@ class SoftActorCriticGradientLoss(Loss):
                     rewards=reward_training,
                     actions=action_training,
                     action_sequence=action_sequence_training,
+                    occupancy_map=occupancy_map_training,
+                    next_occupancy_map=next_occupancy_map_training,
                 )
             )
 
@@ -633,6 +675,8 @@ class SoftActorCriticGradientLoss(Loss):
                 rewards=reward_validation,
                 actions=action_validation,
                 action_sequence=action_sequence_validation,
+                occupancy_map=occupancy_map_validation,
+                next_occupancy_map=next_occupancy_map_validation,
             )
         )
         self.temperature_history.append(

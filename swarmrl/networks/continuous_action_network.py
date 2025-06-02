@@ -229,6 +229,7 @@ class ContinuousActionModel(Network, ABC):
         params: FrozenDict,
         observables: jnp.ndarray,
         previous_actions: jnp.ndarray,
+        occupancy_map: jnp.ndarray = None,
         carry: jnp.ndarray = None,
     ):
         """
@@ -259,6 +260,7 @@ class ContinuousActionModel(Network, ABC):
                 {"params": params, "batch_stats": self.model_state.batch_stats},
                 jnp.array(observables),
                 jnp.array(previous_actions),
+                jnp.array(occupancy_map),
                 carry,
                 train = not self.deployment_mode,
                 mutable=["batch_stats"],
@@ -272,6 +274,7 @@ class ContinuousActionModel(Network, ABC):
                 },
                 jnp.array(observables),
                 jnp.array(previous_actions),
+                jnp.array(occupancy_map),
                 carry,
                 train = not self.deployment_mode,
                 mutable=["batch_stats"],
@@ -283,7 +286,7 @@ class ContinuousActionModel(Network, ABC):
         )
         return action, log_probs, batch_stats_update["batch_stats"], logits.squeeze()
 
-    def compute_action(self, observables, previous_actions) -> jnp.ndarray:
+    def compute_action(self, observables, previous_actions, occupancy_map) -> jnp.ndarray:
         """Computes an action from the action space. This applies the exploration strategy and does not require log-probs.
         Args:
             observables (_type_): state of the system
@@ -305,6 +308,7 @@ class ContinuousActionModel(Network, ABC):
                 },
                 jnp.array(observables),
                 jnp.array(previous_actions),
+                jnp.array(occupancy_map),
                 self.carry,
                 train = False,
                 rngs={"dropout": dropout_subkey},
@@ -317,6 +321,7 @@ class ContinuousActionModel(Network, ABC):
                 },
                 jnp.array(observables),
                 jnp.array(previous_actions),
+                jnp.array(occupancy_map),
                 self.carry,
                 train = False,
                 rngs={"dropout": dropout_subkey},

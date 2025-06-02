@@ -15,15 +15,15 @@ from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict
 from optax._src.base import GradientTransformation
 
-from swarmrl.networks.custom_train_state import CustomTrainState
+from swarmrl.actions import MPIAction
 from swarmrl.exploration_policies.exploration_policy import ExplorationPolicy
 from swarmrl.exploration_policies.random_exploration import RandomExploration
+from swarmrl.networks.custom_train_state import CustomTrainState
 from swarmrl.networks.network import Network
 from swarmrl.sampling_strategies.continuous_gaussian_distribution import (
     ContinuousGaussianDistribution,
 )
 from swarmrl.sampling_strategies.sampling_strategy import SamplingStrategy
-from swarmrl.actions import MPIAction
 
 logger = logging.getLogger(__name__)
 
@@ -115,22 +115,24 @@ class ContinuousCriticModel(Network, ABC):
         variables = self.critic_network.init(
             init_rng,
             np.ones(list(self.input_shape)),
+            np.ones(list([self.input_shape[0], 64, 64, 1])),
             np.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
             np.ones(list([self.input_shape[0], self.action_dimension])),
-            train = False
+            train=False,
         )
         params = variables["params"]
         batch_stats = variables["batch_stats"]
         model_summary = self.critic_network.tabulate(
             jax.random.PRNGKey(1),
             np.ones(list(self.input_shape)),
+            np.ones(list([self.input_shape[0], 64, 64, 1])),
             np.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
             np.ones(list([self.input_shape[0], self.action_dimension])),
-            train = False,
+            train=False,
         )
         print(model_summary)
 
@@ -151,11 +153,12 @@ class ContinuousCriticModel(Network, ABC):
         variables = self.target_network.init(
             init_rng,
             np.ones(list(self.input_shape)),
+            np.ones(list([self.input_shape[0], 64, 64, 1])),
             np.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
             np.ones(list([self.input_shape[0], self.action_dimension])),
-            train = False,
+            train=False,
         )
         params = variables["params"]
         batch_stats = variables["batch_stats"]
@@ -183,13 +186,10 @@ class ContinuousCriticModel(Network, ABC):
         _, subkey = jax.random.split(init_rng)
         self.critic_state, self.target_state = self._create_train_state(subkey)
 
-
     def split_rng_key(self):
-        """Split the rng key for dropout.
-        """
+        """Split the rng key for dropout."""
         self.dropout_key, _ = jax.random.split(self.dropout_key)
-        
-        
+
     def update_model(self, grads, updated_batch_stats):
         """
         Train the model.
@@ -221,8 +221,9 @@ class ContinuousCriticModel(Network, ABC):
         observables: np.ndarray,
         actions: np.ndarray,
         previous_actions: np.ndarray,
-        carry: np.ndarray,
-    )-> tuple:
+        occupancy_map: np.ndarray = None,
+        carry: np.ndarray = None,
+    ) -> tuple:
         """Computes the Q-values of the critic network.
 
         Args:
@@ -242,10 +243,11 @@ class ContinuousCriticModel(Network, ABC):
                 self.critic_state.apply_fn(
                     {"params": params, "batch_stats": self.critic_state.batch_stats},
                     np.array(observables),
+                    np.array(occupancy_map),
                     np.array(previous_actions),
                     np.array(actions),
                     carry,
-                    train = not self.deployment_mode,
+                    train=not self.deployment_mode,
                     mutable=["batch_stats"],
                     rngs={"dropout": dropout_subkey},
                 )
@@ -258,10 +260,11 @@ class ContinuousCriticModel(Network, ABC):
                         "batch_stats": self.critic_state["batch_stats"],
                     },
                     np.array(observables),
+                    np.array(occupancy_map),
                     np.array(previous_actions),
                     np.array(actions),
                     carry,
-                    train = not self.deployment_mode,
+                    train=not self.deployment_mode,
                     mutable=["batch_stats"],
                     rngs={"dropout": dropout_subkey},
                 )
@@ -273,7 +276,8 @@ class ContinuousCriticModel(Network, ABC):
         observables: np.ndarray,
         actions: np.ndarray,
         previous_actions: np.ndarray,
-        carry: np.ndarray,
+        occupancy_map: np.ndarray = None,
+        carry: np.ndarray = None,
     ):
         dropout_subkey = jax.random.fold_in(self.dropout_key, self.iteration_count)
         self.iteration_count += 1
@@ -285,10 +289,11 @@ class ContinuousCriticModel(Network, ABC):
                         "batch_stats": self.target_state.batch_stats,
                     },
                     np.array(observables),
+                    np.array(occupancy_map),
                     np.array(previous_actions),
                     np.array(actions),
                     carry,
-                    train = not self.deployment_mode,
+                    train=not self.deployment_mode,
                     mutable=["batch_stats"],
                     rngs={"dropout": dropout_subkey},
                 )
@@ -301,10 +306,11 @@ class ContinuousCriticModel(Network, ABC):
                         "batch_stats": self.target_state["batch_stats"],
                     },
                     np.array(observables),
+                    np.array(occupancy_map),
                     np.array(previous_actions),
                     np.array(actions),
                     carry,
-                    train = not self.deployment_mode,
+                    train=not self.deployment_mode,
                     mutable=["batch_stats"],
                     rngs={"dropout": dropout_subkey},
                 )
@@ -406,8 +412,10 @@ class ContinuousCriticModel(Network, ABC):
         self.epoch_count = epoch
 
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
-        
-    def load_particle_preprocessor_params(self, filename: str, directory: str = "Models"):
+
+    def load_particle_preprocessor_params(
+        self, filename: str, directory: str = "Models"
+    ):
         """
         Load only the parameters of the ParticlePreprocessor from a saved model.
 

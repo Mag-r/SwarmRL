@@ -39,6 +39,8 @@ class GlobalTrajectoryInformation:
     rewards: list = field(default_factory=list)
     next_features: list = field(default_factory=list)
     next_carry: list = field(default_factory=list)
+    occupancy_map: jnp.ndarray = field(default_factory=lambda: jnp.array([]))
+    next_occupancy_map: jnp.ndarray = field(default_factory=lambda: jnp.array([]))
     killed: bool = False
 
 
