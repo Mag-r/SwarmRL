@@ -430,7 +430,7 @@ def load_model(path):
 
 
 # Initialize the model and optimizer
-model = SmallAttentionUNet()
+model = OccupancyNet()
 model_summary = model.tabulate(
     jax.random.PRNGKey(0), jnp.ones(list([1, n_cells, n_cells, 1]))
 )
@@ -484,7 +484,7 @@ for epoch in range(30001):  # Number of epochs
         logger.info(f"Step {epoch}, loss: {loss:.4f}")
         occ = np.ones((1, n_cells, n_cells, 1), dtype=np.float32)
         occ[:,32:,:,0]=0
-        occ[:, :32, 32:, 0] = 10
+        occ[:, :32, 32:, 0] = 1000
         prediction = state.apply_fn({"params": state.params}, occ)[0, ..., 0]
         plt.figure(figsize=(6, 6))
         plt.imshow(prediction, cmap="binary")
