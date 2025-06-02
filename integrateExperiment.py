@@ -15,6 +15,7 @@ from swarmrl.trainers.global_continuous_trainer import (
     GlobalContinuousTrainer as Trainer,
 )
 from swarmrl.tasks.ball_movement_task import ExperimentBallMovingTask
+from swarmrl.tasks.slam_task import MappingTask
 from swarmrl.tasks.ball_race_task import BallRacingTask
 from swarmrl.engine.gaurav_experiment import GauravExperiment
 from threading import Lock
@@ -50,20 +51,38 @@ class Autoencoder(nn.Module):
 
         return nn.sigmoid(x)
 
+class OccupancyMapper(nn.Module):
+    @nn.compact
+    def __call__(self, x):
+        # Encoder
+        x = nn.Conv(16, (3, 3), strides=(1, 1), padding="SAME")(x)
+        x = nn.sigmoid(x)
 
-sequence_length = 3
+        x = nn.Conv(32, (3, 3), strides=(1, 1), padding="SAME")(x)
+        x = nn.sigmoid(x)
+
+        x = nn.ConvTranspose(32, (3, 3), strides=(1, 1), padding="SAME")(x)
+        x = nn.sigmoid(x)
+
+        x = nn.ConvTranspose(16, (3, 3), strides=(1, 1), padding="SAME")(x)
+        x = nn.sigmoid(x)
+
+        x = nn.Conv(1, (3, 3), strides=(1, 1), padding="SAME")(x)
+
+        return nn.sigmoid(x)
+
+sequence_length = 1
 resolution = 253
 
 number_particles = 30
 learning_rate = 1e-3
 
+lock = Lock()
 obs = BaslerCameraObservable(
     [resolution, resolution], Autoencoder(), model_path="Models/autoencoder_5_9.pkl", number_particles=number_particles
 )
-# task = ExperimentTask(number_particles=number_particles)
-# task = ExperimentHexagonTask(number_particles=number_particles)
-# task = ExperimentBallMovingTask()
-task = BallRacingTask()
+
+task = MappingTask(lock=lock, mapper=OccupancyMapper(), model_path="Models/occupancy_mapper_6_2.pkl", resolution=(resolution, resolution))
 ureg = pint.UnitRegistry()
 Q_ = ureg.Quantity
 
@@ -89,11 +108,8 @@ params = GauravSimParams(
 sim = GauravSim(
     params=params, out_folder="./", with_precalc_capillary=False, save_h5=False
 )
-
 experiment = GauravExperiment(sim)
 
-
-lock = Lock()
 protocol = setupNetwork.defineRLAgent(
     obs, task, learning_rate=learning_rate, sequence_length=sequence_length, lock=lock, number_particles=number_particles
 )

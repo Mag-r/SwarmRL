@@ -87,6 +87,13 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
 
                 correction = (2*(jnp.log(2)-pre_squash_action-jax.nn.softplus(-2*pre_squash_action))).sum(axis=-1)
                 log_probs = log_probs - correction
+                
+                low  = self.action_limits[:, 0]  # (action_dim,)
+                high = self.action_limits[:, 1]  # (action_dim,)
+                scale = (high - low) / 2         # (action_dim,)
+                log_scale_sum = jnp.sum(jnp.log(scale))  # Skalar
+
+                log_probs = log_probs - log_scale_sum
             else:
                 log_probs = None
         action = (

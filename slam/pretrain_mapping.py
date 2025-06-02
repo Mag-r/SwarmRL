@@ -430,14 +430,14 @@ def load_model(path):
 
 
 # Initialize the model and optimizer
-model = OccupancyNet()
+model = SmallAttentionUNet()
 model_summary = model.tabulate(
     jax.random.PRNGKey(0), jnp.ones(list([1, n_cells, n_cells, 1]))
 )
 print(model_summary)
 params = model.init(jax.random.PRNGKey(0), jnp.ones(list([1, n_cells, n_cells, 1])))
 lr_schedule = optax.exponential_decay(
-    init_value=3e-3, transition_steps=100, decay_rate=0.95, staircase=True
+    init_value=1e-3, transition_steps=100, decay_rate=0.95, staircase=True
 )
 optimizer = optax.adam(learning_rate=lr_schedule)
 state = TrainState.create(apply_fn=model.apply, params=params["params"], tx=optimizer)
@@ -484,7 +484,7 @@ for epoch in range(30001):  # Number of epochs
         logger.info(f"Step {epoch}, loss: {loss:.4f}")
         occ = np.ones((1, n_cells, n_cells, 1), dtype=np.float32)
         occ[:,32:,:,0]=0
-        occ[:, :32, 32:, 0] = 1000
+        occ[:, :32, 32:, 0] = 10
         prediction = state.apply_fn({"params": state.params}, occ)[0, ..., 0]
         plt.figure(figsize=(6, 6))
         plt.imshow(prediction, cmap="binary")

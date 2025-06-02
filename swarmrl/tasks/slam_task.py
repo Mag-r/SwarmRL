@@ -20,15 +20,21 @@ class MappingTask(Task):
         Task (Task): Parent class
     """
 
-    def __init__(self, actor_critic_agent, mapper: nn.Module,model_path:str="", lock=Lock(),  range_pos=253, resolution=(64, 64)):
+    def __init__(
+        self,
+        mapper: nn.Module,
+        model_path: str = "",
+        lock=Lock(),
+        range_pos=253,
+        resolution=(64, 64),
+    ):
         super().__init__(particle_type=0)
-        self.actor_critic_agent = actor_critic_agent
         self.lock = lock
         self.range_pos = range_pos
         self.resolution = resolution
         self.mapper = mapper
         self.init_mapper(model_path=model_path)
-        
+
     def init_mapper(self, model_path: str = None):
         dummy_input = jax.random.normal(
             jax.random.PRNGKey(0), (1, self.resolution[0], self.resolution[1], 1)
@@ -41,6 +47,9 @@ class MappingTask(Task):
             with open(model_path, "rb") as f:
                 model_params = pickle.load(f)
             self.model_state = self.model_state.replace(params=model_params)
+
+    def set_agent(self, agent):
+        self.actor_critic_agent = agent
 
     def __call__(self, positions: np.ndarray) -> float:
         with self.lock:
@@ -58,5 +67,3 @@ class MappingTask(Task):
         predicted_arena = jnp.squeeze(predicted_arena)
         reward = jnp.linalg.norm(predicted_arena - 0.5)
         return reward
-        
-        

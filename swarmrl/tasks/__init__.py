@@ -11,6 +11,7 @@ from swarmrl.tasks.experiment_chain import ExperimentChainTask
 from swarmrl.tasks.experiment_hexagon import ExperimentHexagonTask
 from swarmrl.tasks.ball_movement_task import ExperimentBallMovingTask
 from swarmrl.tasks.ball_race_task import BallRacingTask
+from swarmrl.tasks.slam_task import MappingTask
 
 __all__ = [
     searching.__name__,
@@ -23,4 +24,5 @@ __all__ = [
     ExperimentHexagonTask.__name__,
     ExperimentBallMovingTask.__name__,
     BallRacingTask.__name__,
+    MappingTask.__name__,
 ]
