@@ -10,9 +10,12 @@ import optax
 from flax import linen as nn
 from flax.core import unfreeze
 from flax.core.frozen_dict import freeze, unfreeze
-from flax.training.checkpoints import restore_checkpoint, save_checkpoint
 from flax.training.train_state import TrainState
 from jax import numpy as jnp
+
+import flax.serialization
+import os
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -258,39 +261,7 @@ class SmallUnetDWSC(nn.Module):
         return out
 
 
-class SimpleSelfAttention(nn.Module):
-    """
-    Ein leichtes Self-Attention-Modul für Bottleneck-Feature-Map (8×8×C).
-    """
-
-    channels: int  # z.B. 48
-
-    @nn.compact
-    def __call__(self, x):
-        # x: (B, H, W, C) – wir nehmen H=W=8
-        B, H, W, C = x.shape
-        # 1) Query/Key: reduzierte Dimension C//8, Value: C
-        query = nn.Conv(features=C // 8, kernel_size=(1, 1), padding="SAME")(x)
-        key = nn.Conv(features=C // 8, kernel_size=(1, 1), padding="SAME")(x)
-        value = nn.Conv(features=C, kernel_size=(1, 1), padding="SAME")(x)
-
-        # Flatten räumlich in (B, N, D)
-        N = H * W
-        q_flat = query.reshape((B, N, C // 8))  # (B, 64, C//8)
-        k_flat = key.reshape((B, N, C // 8))  # (B, 64, C//8)
-        v_flat = value.reshape((B, N, C))  # (B, 64, C)
-
-        # 2) Attention‐Score: (B, N, N)
-        attn_scores = jnp.einsum("bqi,bki->bqk", q_flat, k_flat)  # (B,64,64)
-        attn_weights = nn.softmax(attn_scores, axis=-1)  # (B,64,64)
-
-        # 3) Weighted Sum für Output
-        attn_out = jnp.einsum("bqk,bkv->bqv", attn_weights, v_flat)  # (B,64,C)
-        attn_out = attn_out.reshape((B, H, W, C))  # (B,8,8,C)
-
-        # 4) Learnable Skalierungs-Parameter gamma
-        gamma = self.param("gamma", nn.initializers.zeros, (1,))
-        return x + gamma * attn_out
+        
 
 
 class SmallAttentionUNet(nn.Module):
@@ -299,28 +270,31 @@ class SmallAttentionUNet(nn.Module):
     @nn.compact
     def __call__(self, x):
         # x: (B,64,64,1)
-
+        steps = jnp.sum(x, axis=(1, 2, 3))  # Summe über alle Zellen
+        steps = jnp.ones_like(x) * steps[:, None, None, None]  # Broadcast auf (B,64,64,1)
+        x = (x- jnp.min(x)) / (jnp.max(x) - jnp.min(x) + 1e-6)  # Normalisiere Input
+        x = jnp.concatenate([x, steps], axis=-1)  # (B,64,64,2)
         # --- Encoder ---
         # Block 1: 1→16, Downsample auf (32×32)
-        e1 = nn.Conv(features=8, kernel_size=(3, 3), strides=(2, 2), padding="SAME")(
+        e1 = nn.Conv(features=8, kernel_size=(3, 3), strides=(2, 2), padding="SAME", name="enc_conv_0")(
             x
         )  # (32,32,16)
         e1 = nn.silu(e1)
 
         # Block 2: 16→32, Downsample auf (16×16)
-        e2 = nn.Conv(features=16, kernel_size=(3, 3), strides=(2, 2), padding="SAME")(
+        e2 = nn.Conv(features=16, kernel_size=(3, 3), strides=(2, 2), padding="SAME", name="enc_conv_1")(
             e1
         )  # (16,16,32)
         e2 = nn.silu(e2)
 
         # Block 3: 32→48, Downsample auf (8×8)
-        e3 = nn.Conv(features=32, kernel_size=(3, 3), strides=(2, 2), padding="SAME")(
+        e3 = nn.Conv(features=32, kernel_size=(3, 3), strides=(2, 2), padding="SAME", name="enc_conv_2")(
             e2
         )  # (8, 8,48)
         e3 = nn.silu(e3)
 
         # --- Bottleneck mit Self-Attention ---
-        b = e3  # SimpleSelfAttention(channels=32)(e3)  # (8,8,48)
+        b = self.attention_helper(e3)  # (8,8,48)
 
         # --- Decoder ---
         # Up 1: (8×8)→(16×16), 48→32
@@ -355,23 +329,66 @@ class SmallAttentionUNet(nn.Module):
         # --- Final Output ---
         out = nn.Conv(features=1, kernel_size=(1, 1), padding="SAME")(d3)  # (64,64,1)
         return nn.sigmoid(out)
+    def attention_helper(self, x):
+        B, H, W, C = x.shape
+        # 1) Query/Key: reduzierte Dimension C//8, Value: C
+        query = nn.Conv(features=C // 8, kernel_size=(1, 1), padding="SAME", name="enc_attention_q")(x)
+        key = nn.Conv(features=C // 8, kernel_size=(1, 1), padding="SAME", name="enc_attention_k")(x)
+        value = nn.Conv(features=C, kernel_size=(1, 1), padding="SAME", name="enc_attention_v")(x)
+
+        # Flatten räumlich in (B, N, D)
+        N = H * W
+        q_flat = query.reshape((B, N, C // 8))  # (B, 64, C//8)
+        k_flat = key.reshape((B, N, C // 8))  # (B, 64, C//8)
+        v_flat = value.reshape((B, N, C))  # (B, 64, C)
+
+        # 2) Attention‐Score: (B, N, N)
+        attn_scores = jnp.einsum("bqi,bki->bqk", q_flat, k_flat)  # (B,64,64)
+        attn_weights = nn.softmax(attn_scores, axis=-1)  # (B,64,64)
+
+        # 3) Weighted Sum für Output
+        attn_out = jnp.einsum("bqk,bkv->bqv", attn_weights, v_flat)  # (B,64,C)
+        attn_out = attn_out.reshape((B, H, W, C))  # (B,8,8,C)
+
+        # 4) Learnable Skalierungs-Parameter gamma
+        gamma = self.param("gamma", nn.initializers.zeros, (1,))
+        return x + gamma * attn_out
 
 
-class OccupancyNet(nn.Module):
+def edge_pad(x, kernel_size):
+    pad_h = kernel_size[0] // 2
+    pad_w = kernel_size[1] // 2
+    return jnp.pad(
+        x,
+        pad_width=((0, 0), (pad_h, pad_h), (pad_w, pad_w), (0, 0)),
+        mode='edge'
+    )
+
+class OccupancyMapper(nn.Module):
     @nn.compact
     def __call__(self, x):
-        x = nn.Conv(16, (3, 3), padding="SAME")(x)
+        x = (x-np.min(x)) / (np.max(x) - np.min(x) + 1e-6)  # Normalisiere Input
+        x = edge_pad(x, (3, 3))
+        x = nn.Conv(16, (3, 3), padding="VALID")(x)
         x = nn.silu(x)
-        x = nn.Conv(32, (3, 3), padding="SAME")(x)
-        x = nn.silu(x)
-        x = nn.ConvTranspose(32, (3, 3), padding="SAME")(x)
-        x = nn.silu(x)
-        x = nn.ConvTranspose(16, (3, 3), padding="SAME")(x)
-        x = nn.silu(x)
-        x = nn.ConvTranspose(1, (3, 3), padding="SAME")(x)
-        x = nn.sigmoid(x)
-        return x
 
+        x = edge_pad(x, (3, 3))
+        x = nn.Conv(32, (3, 3), padding="VALID")(x)
+        x = nn.silu(x)
+
+        x = edge_pad(x, (3, 3))
+        x = nn.ConvTranspose(32, (3, 3), padding="VALID")(x)
+        x = nn.silu(x)
+
+        x = edge_pad(x, (3, 3))
+        x = nn.ConvTranspose(16, (3, 3), padding="VALID")(x)
+        x = nn.silu(x)
+
+        x = edge_pad(x, (3, 3))
+        x = nn.ConvTranspose(1, (3, 3), padding="VALID")(x)
+        x = nn.sigmoid(x)
+
+        return x
 
 def dice_loss(pred: jnp.ndarray, true: jnp.ndarray, eps: float = 1e-6) -> jnp.ndarray:
     """
@@ -412,25 +429,38 @@ def train_step(state, input_data, target_data):
     return new_state, loss
 
 
-def save_model(state, path):
-    abs_path = os.path.abspath(path)
-    os.makedirs(abs_path, exist_ok=True)
-    with open(os.path.join(abs_path, "model_state.pkl"), "wb") as f:
-        pickle.dump(state.params, f)
+def save_train_state(state, path):
+    os.makedirs(path, exist_ok=True)
+    file_path = os.path.join(path, "train_state.pkl")
+    with open(file_path, "wb") as f:
+        model_params = state.params
+        opt_state = state.opt_state
+        pickle.dump((model_params, opt_state), f)
+        
+def save_encoder_state(state, path):
+    os.makedirs(path, exist_ok=True)
+    file_path = os.path.join(path, "encoder_state.pkl")
+
+    # Nur Encoder-Parameter extrahieren
+    encoder_keys = ["enc_conv_0", "enc_conv_1", "enc_conv_2", "enc_attention_q", "enc_attention_k", "enc_attention_v", "gamma"]
+    encoder_params = {
+        k: v for k, v in state.params.items() if k in encoder_keys
+    }
+
+    with open(file_path, "wb") as f:
+        pickle.dump(encoder_params, f)
 
 
-def load_model(path):
-    abs_path = os.path.abspath(path)
-    model_file = os.path.join(abs_path, "model_state.pkl")
-    if not os.path.exists(model_file):
-        raise FileNotFoundError(f"No model file found at {model_file}")
-    with open(model_file, "rb") as f:
-        params = pickle.load(f)
-    return params
-
+def load_train_state(path):
+    file_path = os.path.join(path, "train_state.pkl")
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"No train state file found at {file_path}")
+    with open(file_path, "rb") as f:
+        params, opt_state = pickle.load(f)
+    return params, opt_state
 
 # Initialize the model and optimizer
-model = OccupancyNet()
+model = SmallAttentionUNet()
 model_summary = model.tabulate(
     jax.random.PRNGKey(0), jnp.ones(list([1, n_cells, n_cells, 1]))
 )
@@ -441,8 +471,8 @@ lr_schedule = optax.exponential_decay(
 )
 optimizer = optax.adam(learning_rate=lr_schedule)
 state = TrainState.create(apply_fn=model.apply, params=params["params"], tx=optimizer)
-params = load_model("occupancy_model_checkpoint")  # Load the model if it exists
-state = state.replace(params=params)
+params, opt_state= load_train_state("occupancy_model_checkpoint")  # Load the model if it exists
+# state = state.replace(params=params, opt_state=opt_state)
 
 losses = np.array([])
 losses_circles = np.array([])
@@ -474,7 +504,7 @@ for epoch in range(30001):  # Number of epochs
     plt.legend()
     plt.savefig("loss_plot.png")
     plt.close()
-    if epoch % 1000 == 0 and epoch > 0:
+    if epoch % 100 == 0 and epoch > 0:
         _, loss_circles = train_step(state, input_data, target_data)
         _, loss_race = train_step(state, input_data_2, target_data_2)
         _, loss_slit = train_step(state, input_data_3, target_data_3)
@@ -516,4 +546,5 @@ for epoch in range(30001):  # Number of epochs
 
         plt.savefig(f"map_{epoch}.png")
         plt.close(fig)
-        save_model(state, "occupancy_model_checkpoint")
+        save_train_state(state, "occupancy_model_checkpoint")
+        # save_encoder_state(state, "occupancy_model_checkpoint")
