@@ -8,12 +8,16 @@ import pickle
 from abc import ABC
 from typing import List
 
+import flax.core
+import flax.core
 import jax
 import jax.numpy as jnp
 import numpy as onp
 from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict
 from optax._src.base import GradientTransformation
+import flax
+import time
 
 from swarmrl.networks.custom_train_state import CustomTrainState
 from swarmrl.exploration_policies.exploration_policy import ExplorationPolicy
@@ -119,6 +123,9 @@ class ContinuousActionModel(Network, ABC):
             init_rng,
             jnp.ones(list(self.input_shape)),
             jnp.ones(
+                list([self.input_shape[0], 1, 64,64,1])
+            ),  
+            jnp.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
             train = False,
@@ -129,6 +136,9 @@ class ContinuousActionModel(Network, ABC):
             jax.random.PRNGKey(1),
             jnp.ones(list(self.input_shape)),
             jnp.ones(
+                list([self.input_shape[0], 1, 64,64,1])
+            ),  
+            jnp.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
         )
@@ -136,6 +146,9 @@ class ContinuousActionModel(Network, ABC):
         *_, self.carry = self.model.apply(
             {"params": params, "batch_stats": batch_stats},
             jnp.ones(list(self.input_shape)),
+            jnp.ones(
+                list([self.input_shape[0], 1, 64,64,1])
+            ),  
             jnp.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
@@ -177,11 +190,11 @@ class ContinuousActionModel(Network, ABC):
         temperature : float
                 Temperature of the model.
         """
-        params = self.model_state.params
+        params = flax.core.unfreeze(self.model_state.params)
         logger.info(f"current value and shape of temperature: {params['temperature'], jnp.shape(params['temperature'])}")
         params["temperature"] = jnp.array([jnp.log(exp_temperature)])  
         self.model_state = self.model_state.replace(
-            params=params,
+            params=flax.core.freeze(params),
         )
         logger.info(f"new value and shape of temperature: {params['temperature'], jnp.shape(params['temperature'])}")
         logger.info(f"Temperature set to {exp_temperature}")
@@ -259,8 +272,8 @@ class ContinuousActionModel(Network, ABC):
             (logits, _), batch_stats_update = self.model_state.apply_fn(
                 {"params": params, "batch_stats": self.model_state.batch_stats},
                 jnp.array(observables),
-                jnp.array(previous_actions),
                 jnp.array(occupancy_map),
+                jnp.array(previous_actions),
                 carry,
                 train = not self.deployment_mode,
                 mutable=["batch_stats"],
@@ -273,8 +286,8 @@ class ContinuousActionModel(Network, ABC):
                     "batch_stats": self.model_state["batch_stats"],
                 },
                 jnp.array(observables),
-                jnp.array(previous_actions),
                 jnp.array(occupancy_map),
+                jnp.array(previous_actions),
                 carry,
                 train = not self.deployment_mode,
                 mutable=["batch_stats"],
@@ -295,6 +308,7 @@ class ContinuousActionModel(Network, ABC):
         Returns:
             jnp.array: _description_
         """
+        start = time.time()
         self.iteration += 1
         sampling_subkey = jax.random.fold_in(
             self.rng_key_sampling_strategy, self.iteration
@@ -307,8 +321,8 @@ class ContinuousActionModel(Network, ABC):
                     "batch_stats": self.model_state.batch_stats,
                 },
                 jnp.array(observables),
-                jnp.array(previous_actions),
                 jnp.array(occupancy_map),
+                jnp.array(previous_actions),
                 self.carry,
                 train = False,
                 rngs={"dropout": dropout_subkey},
@@ -320,13 +334,13 @@ class ContinuousActionModel(Network, ABC):
                     "batch_stats": self.model_state["batch_stats"],
                 },
                 jnp.array(observables),
-                jnp.array(previous_actions),
                 jnp.array(occupancy_map),
+                jnp.array(previous_actions),
                 self.carry,
                 train = False,
                 rngs={"dropout": dropout_subkey},
             )
-
+        logger.info(f"Time for model inference: {time.time() - start:.4f} seconds")
         self.carry = jnp.array(
             [
                 self.carry[0][jnp.shape(observables)[0] - 1],
@@ -345,6 +359,7 @@ class ContinuousActionModel(Network, ABC):
             logits[jnp.newaxis, :], subkey=sampling_subkey, calculate_log_probs=False, deployment_mode=self.deployment_mode
         )
         action = self.exploration_policy(action, jax.random.split(sampling_subkey)[0])
+        logger.info(f"total time for action computation: {time.time() - start:.4f} seconds")
         return action
 
     def export_model(self, filename: str = "model", directory: str = "Models"):
@@ -396,7 +411,7 @@ class ContinuousActionModel(Network, ABC):
 
         self.model_state = self.model_state.replace(
             params=model_params,
-            # opt_state=opt_state,
+            opt_state=opt_state,
             step=opt_step,
             batch_stats=batch_stats,
         )
@@ -405,6 +420,21 @@ class ContinuousActionModel(Network, ABC):
         self.epoch_count = epoch
         # self.carry = carry
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
+        
+    def set_optimizer(self, optimizer: GradientTransformation):
+        """
+        Set the optimizer for the model.
+
+        Parameters
+        ----------
+        optimizer : GradientTransformation
+            The optimizer to set for the model.
+        """
+        if isinstance(self.optimizer, dict):
+            raise NotImplementedError
+        else:
+            self.model_state = self.model_state.replace(tx=optimizer)
+            logger.info("Optimizer successfully set.")
 
     def load_particle_preprocessor_params(self, filename: str, directory: str = "Models"):
         """
@@ -436,6 +466,36 @@ class ContinuousActionModel(Network, ABC):
         self.model_state = self.model_state.replace(params=updated_params)
 
         logger.info("ParticlePreprocessor parameters successfully loaded.")
+        
+    def load_encoder(self, filename: str, directory: str = "Models"):
+        """
+        Load the encoder parameters from a saved model.
+
+        Parameters
+        ----------
+        filename : str
+            Name of the model state file.
+        directory : str
+            Path to the model state file.
+
+        Updates
+        -------
+        Updates the encoder parameters in the current model.
+        """
+        # Load the saved encoder params (should be a dict)
+        with open(os.path.join(directory, filename + ".pkl"), "rb") as f:
+            encoder_params = pickle.load(f)
+        print(f"Loaded encoder parameters: {encoder_params.keys()}")
+        # Merge with existing model params
+        current_params = self.model_state.params
+        updated_params = {
+            **current_params,
+            "encoder": encoder_params  
+        }
+        self.model_state = self.model_state.replace(params=updated_params)
+
+        logger.info("Encoder parameters successfully loaded.")
+
 
     def get_exp_temperature(self) -> float:
         """

@@ -16,12 +16,12 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6344
+    labview_port = 6340
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  
 
-    def __init__(self, simulation: GauravSim, update_rate: float = 20.0):
+    def __init__(self, simulation: GauravSim, action_limits: jnp.ndarray, update_rate: float = 20.0):
         super().__init__()
         self.simulation = simulation
         self.update_rate = update_rate
@@ -30,10 +30,12 @@ class GauravExperiment(Engine):
         self.server_connection = None
         self.keep_publishing = threading.Event()
         self.publishing_thread = None
-        self.message_to_publish = " "  # Initial message
+        self.message_to_publish = " ".encode("utf-8")
         self.colloids = None
         self.establish_connection()
         self.lock = threading.Lock()
+        self.keeping_time = 6
+        self.action_limits = action_limits 
 
     def establish_connection(self):
         """Establish TCP connections with LabVIEW"""
@@ -96,7 +98,7 @@ class GauravExperiment(Engine):
     def update_message(self, new_message: str):
         """Update the message to be published."""
         with self.lock:
-            self.message_to_publish = new_message
+            self.message_to_publish = new_message.encode("utf-8")
 
     def _publish_loop(self):
         """Continuously send updated messages at the given update rate."""
@@ -129,6 +131,7 @@ class GauravExperiment(Engine):
     def send_action(self, action: MPIAction):
         """Send an action to LabVIEW."""
         # Convert action to string message and send
+
         action = self.clip_actions(action)
         action_message = f"M_0.0_{action.magnitude[0]:.03f}_{action.magnitude[1]:.03f}_{action.frequency[0]:.03f}_{action.frequency[1]:.03f}_{action.keep_magnetic_field:.03f}_{action.gradient[0]:.03f}_{action.gradient[1]:.03f}"
         
@@ -152,25 +155,36 @@ class GauravExperiment(Engine):
         time.sleep(10)
         pass
 
+    def squash_action(self, action: jnp.ndarray) -> jnp.ndarray:
+        """
+        Squashes the action to the range indicated by action_limits using tanh.
+        Args:
+            action (jnp.ndarray): Shape (batch_size, action_dim)
+        Returns:
+            jnp.ndarray: Shape (batch_size, action_dim)
+        """
+        low = self.action_limits[:, 0]
+        high = self.action_limits[:, 1]
+        scale = (high - low) / 2.0
+        mid = (high + low) / 2.0
+        return jnp.tanh(action) * scale + mid
+    
+    
     def integrate(self, n_slices: int, force_model: GlobalForceFunction):
         """Perform a real-experiment equivalent of an integration step."""
 
+        force_model.set_training_mode(True)
+        start = time.time()
         for _ in range(n_slices):
-            force_model.set_training_mode(True)
             action = force_model.calc_action(None)
+            action = self.squash_action(action.reshape(1, -1)).squeeze()
+            
             action = MPIAction(
-                magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=3, gradient=action[4:6]
+                magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=1, gradient=action[4:6]
             )
             self.send_action(action)
-            time.sleep(float(action.keep_magnetic_field) * 0.95)
-            
-            force_model.set_training_mode(False)
-            # for _ in range(3):
-            #     action = force_model.calc_action(None)
-            #     action = MPIAction(
-            #         magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=1, gradient=action[4:6]
-            #     )
-            #     self.send_action(action)
-            #     time.sleep(float(action.keep_magnetic_field) * 0.95)
-            force_model.set_training_mode(True)
+            sleeping_time = max(0, self.keeping_time - (time.time() - start))
+            logger.warning(f"calculations take longer than expected: {time.time() - start:.2f} seconds") if sleeping_time == 0 else None
+            time.sleep(sleeping_time)
+            start = time.time()
             force_model.calc_reward(self.colloids)

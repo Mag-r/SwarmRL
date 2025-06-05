@@ -53,10 +53,9 @@ class GlobalOUExploration(ExplorationPolicy, ABC):
         """
         key_normal, key_uniform = jax.random.split(rng_key)
 
-        value_range = self.action_limits[:, 1] - self.action_limits[:, 0]
 
         long_term_noise_shift = self.drift * (self.long_term_mean - self.noise)
-        random_noise = self.volatility * value_range * jax.random.normal(key_normal, shape=self.noise.shape)
+        random_noise = self.volatility *  jax.random.normal(key_normal, shape=self.noise.shape)
 
         mask = (jax.random.uniform(key_uniform, shape=self.noise.shape) < self.epsilon).astype(np.float32)
 
@@ -65,6 +64,4 @@ class GlobalOUExploration(ExplorationPolicy, ABC):
 
         actions = model_actions + self.noise
         logger.info(f"noise: {self.noise}")
-
-        actions = np.clip(actions, self.action_limits[:, 0], self.action_limits[:, 1])
         return actions

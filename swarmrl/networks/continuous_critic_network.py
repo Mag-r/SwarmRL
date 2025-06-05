@@ -14,6 +14,7 @@ import numpy as onp
 from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict
 from optax._src.base import GradientTransformation
+import flax
 
 from swarmrl.actions import MPIAction
 from swarmrl.exploration_policies.exploration_policy import ExplorationPolicy
@@ -127,7 +128,7 @@ class ContinuousCriticModel(Network, ABC):
         model_summary = self.critic_network.tabulate(
             jax.random.PRNGKey(1),
             np.ones(list(self.input_shape)),
-            np.ones(list([self.input_shape[0], 64, 64, 1])),
+            np.ones(list([self.input_shape[0], 1, 64, 64, 1])),
             np.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
@@ -153,7 +154,7 @@ class ContinuousCriticModel(Network, ABC):
         variables = self.target_network.init(
             init_rng,
             np.ones(list(self.input_shape)),
-            np.ones(list([self.input_shape[0], 64, 64, 1])),
+            np.ones(list([self.input_shape[0], 1, 64, 64, 1])),
             np.ones(
                 list([self.input_shape[0], self.sequence_length, self.action_dimension])
             ),
@@ -197,8 +198,6 @@ class ContinuousCriticModel(Network, ABC):
         See the parent class for a full doc-string.
         """
         # Logging for grads and pre-train model state
-        logger.debug(f"{grads=}")
-        logger.debug(f"{self.critic_state=}")
 
         if isinstance(self.optimizer, dict):
             raise NotImplementedError
@@ -395,23 +394,40 @@ class ContinuousCriticModel(Network, ABC):
                 batch_stats_critic,
                 batch_stats_target,
             ) = pickle.load(f)
-
+        print("type of current opt_state:", type(self.critic_state.opt_state))
+        print("type of loaded opt_state:", type(opt_state_critic))
         self.critic_state = self.critic_state.replace(
             params=model_params_critics,
-            # opt_state=opt_state_critic,
-            # step=opt_step_critic,
+            opt_state=opt_state_critic,
+            step=opt_step_critic,
             batch_stats=batch_stats_critic,
         )
         self.target_state = self.target_state.replace(
             params=model_params_target,
-            # opt_state=opt_state_target,
-            # step=opt_step_target,
+            opt_state=opt_state_target,
+            step=opt_step_target,
             batch_stats=batch_stats_target,
         )
 
         self.epoch_count = epoch
 
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
+        
+    def set_optimizer(self, optimizer: GradientTransformation):
+        """
+        Set the optimizer for the model.
+
+        Parameters
+        ----------
+        optimizer : GradientTransformation
+            The optimizer to use for training the model.
+        """
+        if isinstance(self.optimizer, dict):
+            raise NotImplementedError
+        else:
+            self.critic_state = self.critic_state.replace(tx=optimizer)
+            self.target_state = self.target_state.replace(tx=optimizer)
+            logger.info("Optimizer successfully set.")
 
     def load_particle_preprocessor_params(
         self, filename: str, directory: str = "Models"
@@ -449,6 +465,43 @@ class ContinuousCriticModel(Network, ABC):
 
         logger.info("ParticlePreprocessor parameters successfully loaded.")
 
+    
+    def load_encoder(self, filename: str, directory: str = "Models"):
+        """
+        Load the encoder parameters from a saved model.
+
+        Parameters
+        ----------
+        filename : str
+            Name of the model state file.
+        directory : str
+            Path to the model state file.
+
+        Updates
+        -------
+        Updates the encoder parameters in the current model.
+        """
+        # Load the saved encoder params (should be a dict)
+        with open(os.path.join(directory, filename + ".pkl"), "rb") as f:
+            encoder_params = pickle.load(f)  
+
+        # Merge with existing model params
+        current_params_critic = self.critic_state.params
+        current_params_target = self.target_state.params
+        updated_params_critic = {
+            **current_params_critic,
+            "encoder": encoder_params 
+        }
+        updated_params_target = {
+            **current_params_target,
+            "encoder": encoder_params 
+        }
+        self.criic_state = self.critic_state.replace(params=updated_params_critic)
+        self.target_state = self.target_state.replace(params=updated_params_target)
+
+        logger.info("Encoder parameters successfully loaded.")
+
+        
     def polyak_averaging(self, tau: float = 0.005):
         """
         Update the target network with Polyak averaging.

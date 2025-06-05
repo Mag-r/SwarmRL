@@ -8,73 +8,83 @@ import optax
 from jax import numpy as jnp
 
 import swarmrl as srl
-
-logger = logging.getLogger(__name__)
-action_dimension = 6
-action_limits = jnp.array(
-    [[0, 70], [0, 70], [0, 15], [0, 15], [-0.8, 0.8], [-0.5, 0.5]]
-)
-
-
 from typing import Any, Tuple
 
 import jax
 import jax.numpy as jnp
 from flax import linen as nn
+import time
+
+logger = logging.getLogger(__name__)
+action_dimension = 6
+action_limits = jnp.array(
+    [[0, 80], [0, 80], [0, 20], [0, 20], [-0.8, 0.8], [-0.5, 0.5]]
+)
 
 
-class CombinedPreprocessor(nn.Module):
-    particle_hidden_dim: int = 64
-    map_hidden_dim: int = 32
+
+class ParticlePreprocessor(nn.Module):
+    hidden_dim: int = 12
     num_heads: int = 4
+    dropout_rate: float = 0.1
 
     @nn.compact
-    def __call__(self, state: jnp.ndarray, occupancy_map: jnp.ndarray) -> jnp.ndarray:
-        """
-        Args:
-            state: shape (batch, time, n_particles, dim)
-            occupancy_map: shape (batch, time, 64, 64)
-        Returns:
-            features: shape (batch, time, final_hidden_dim)
-        """
-        # 1. Particle processing
-
+    def __call__(self, state: jnp.ndarray, train: bool = False) -> jnp.ndarray:
         b, t, n, d = state.shape
-        x = state.reshape(b * t, n, d)
-        x = nn.Dense(self.particle_hidden_dim)(x)
-        x = nn.silu(x)
-        x = nn.LayerNorm()(x)
-        x = nn.SelfAttention(
-            num_heads=self.num_heads,
-            qkv_features=self.particle_hidden_dim,
-            out_features=self.particle_hidden_dim,
-        )(x)
+        pos = state.reshape(b * t, n, d)
+        x = nn.Dense(self.hidden_dim)(pos)
+        pe = self.param("pos_encoding", nn.initializers.normal(0.02), (pos.shape[1], self.hidden_dim))
+        x = x + pe
+
+        x = self.attention_helper(x, train)
         x = jnp.mean(x, axis=1)
-        position_feat = x.reshape(b, t, self.particle_hidden_dim)
 
-        # 2. Image processing
-        m = occupancy_map.reshape(b * t, 64, 64, 1)
-        m = nn.Conv(features=8, kernel_size=(5, 5), strides=(2, 2))(m)  # -> 30×30
-        m = nn.silu(m)
-        m = nn.Conv(features=16, kernel_size=(3, 3), strides=(2, 2))(m)  # -> 14×14
-        m = nn.silu(m)
-        m = m.reshape(b * t, -1)
-        m = nn.Dense(self.map_hidden_dim)(m)
-        m = nn.silu(m)
-        map_feat = m.reshape(b, t, -1)
+        return x
+    
+    def attention_helper(self, x: jnp.ndarray, train: bool=False) -> jnp.ndarray:
+        y = nn.LayerNorm()(x)
+        y = nn.SelfAttention(
+            num_heads=self.num_heads,
+            qkv_features=self.hidden_dim,
+            out_features=self.hidden_dim,
+            dropout_rate=self.dropout_rate,
+            deterministic=not train
+        )(y)
+        return y
 
-        return jnp.concatenate(
-            [position_feat, map_feat], axis=-1
-        )  # (b, t, total_hidden)
+    
+class SmallAttentionUNetEncoder(nn.Module):
+    """Nur der Encoder (mit Self-Attention) zur Verarbeitung der Occupancy Map."""
+
+    @nn.compact
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        x = jnp.clip(x, 0, 1000.0)* (1.0/1000.0)  
+        e1 = nn.Conv(features=4, kernel_size=(3, 3), strides=(2, 2), padding="SAME", name="enc_conv_0")(
+            x
+        )  # (32,32,16)
+        e1 = nn.silu(e1)
+        e2 = nn.Conv(features=8, kernel_size=(3, 3), strides=(2, 2), padding="SAME", name="enc_conv_1")(
+            e1
+        )  # (16,16,32)
+        e2 = nn.silu(e2)
+        e3 = nn.Conv(features=16, kernel_size=(3, 3), strides=(2, 2), padding="SAME", name="enc_conv_2")(
+            e2
+        )  # (8, 8,48)
+        e3 = nn.silu(e3)
+
+        b = jnp.mean(e3, axis=(1, 2))  # ergibt direkt Shape (B,16)
+        return b
 
 
 class ActorNet(nn.Module):
     """SAC Gaussian actor producing mean & log-std, keeps your original signature."""
 
     preprocessor: Any  # e.g. ParticlePreprocessor()
-    hidden_dims: Tuple[int, ...] = (128, 128)
+    encoder: Any 
+    hidden_dim: int = 12
     log_std_min: float = -15.0
     log_std_max: float = 1.0
+    dropout_rate: float = 0.1
 
     def setup(self):
         # Define a scanned LSTM cell
@@ -87,7 +97,7 @@ class ActorNet(nn.Module):
         )
         self.lstm = self.ScanLSTM(features=2)
         temperature = self.param(
-            "temperature", lambda key, shape: jnp.full(shape, jnp.log(1)), (1,)
+            "temperature", lambda key, shape: jnp.full(shape, jnp.log(1E-2)), (1,)
         )
 
     @nn.compact
@@ -111,26 +121,26 @@ class ActorNet(nn.Module):
                 jax.random.PRNGKey(0), state.shape[:1] + state.shape[2:]
             )
         # 1) preprocess
-        x = self.preprocessor(state / 253.0, occupancy_map)  # (batch, time, hidden_dim)
+        x = self.preprocessor(state / 253.0, train)  # (batch, time, hidden_dim)
 
-        # 2) flatten time & features
-        b, t, h = x.shape
-        x = x.reshape(b, t * h)
+        occ = self.encoder(occupancy_map.reshape((-1,64,64,1)))  # (batch, hidden_dim)
+        x = jnp.concatenate([x, occ], axis=-1)  # (batch, t*h + hidden_dim)
+        x = nn.LayerNorm()(x)  # (batch, t*h + hidden_dim)
+        x = nn.Dense(self.hidden_dim)(x)  # (batch, hidden_dim)
+        x = nn.silu(x)  # (batch, hidden_dim)
+        for _ in range(4):
+            y = nn.LayerNorm()(x)
+            y = nn.Dense(self.hidden_dim)(y)
+            y = nn.silu(y)
 
-        # 3) MLP
-        for hd in self.hidden_dims:
-            x = nn.Dense(hd)(x)
-            x = nn.silu(x)
-            x = nn.LayerNorm()(x)
 
-        # 4) outputs
         mu = nn.Dense(action_dimension)(x)
+        mu = jnp.tanh(mu) * 3.0
         log_std = nn.Dense(action_dimension)(x)
         log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
 
-        # 5) concat so you still return a single tensor and carry
-        out = jnp.concatenate([mu, log_std], axis=-1)  # (batch, action_dim*2)
-        y = nn.BatchNorm(use_running_average=not train)(out)  # (batch, action_dim*2)
+        out = jnp.concatenate([mu, log_std], axis=-1)
+        z= nn.BatchNorm(use_running_average=not train)(out)  # (batch, action_dim*2)
         return out, carry
 
 
@@ -138,7 +148,9 @@ class CriticNet(nn.Module):
     """Twin Q-networks for SAC, keeps your original signature."""
 
     preprocessor: Any  # e.g. ParticlePreprocessor()
-    hidden_dims: Tuple[int, ...] = (128, 64)
+    encoder: Any
+    hidden_dim: int = 12
+    dropout_rate: float = 0.1
 
     @nn.compact
     def __call__(
@@ -159,29 +171,28 @@ class CriticNet(nn.Module):
           q1, q2 each of shape (batch, 1)
         """
         # 1) preprocess
-        x = self.preprocessor(state / 253.0, occupancy_map)  # (batch, time, hidden_dim)
-        b, t, h = x.shape
-        x = x.reshape(b, t * h)  # (batch, t*h)
-        action_limits_range = action_limits[:, 1] - action_limits[:, 0]
-        action = action / action_limits_range  # (batch, action_dim)
+        x = self.preprocessor(state / 253.0, train)  # (batch, time, hidden_dim)
 
-        # 2) concatenate action
-        sa = jnp.concatenate([x, action], axis=-1)  # (batch, t*h + action_dim)
+        occ = self.encoder(occupancy_map.reshape((-1,64,64,1)))  # (batch, hidden_dim)
 
-        # 3) first Q
-        q1 = sa
-        for hd in self.hidden_dims:
-            q1 = nn.Dense(hd, name=f"q1_fc{hd}")(q1)
-            q1 = nn.silu(q1)
-        q1 = nn.Dense(1, name="q1_out")(q1)
+        sa = jnp.concatenate([x, action, occ], axis=-1)
+        sa = nn.Dense(self.hidden_dim)(sa)  # (batch, hidden_dim)
+        sa = nn.silu(sa)  # (batch, hidden_dim)
 
-        # 4) second Q
-        q2 = sa
-        for hd in self.hidden_dims:
-            q2 = nn.Dense(hd, name=f"q2_fc{hd}")(q2)
-            q2 = nn.silu(q2)
-        q2 = nn.Dense(1, name="q2_out")(q2)
-        y = nn.BatchNorm(use_running_average=not train)(q1)  # (batch, 1)
+        def q_net(name: str):
+            y = sa
+            for i in range(4):
+                z = nn.LayerNorm()(y)
+                z = nn.Dense(self.hidden_dim, name=f"{name}_fc{i}")(z)
+                z = nn.silu(z)
+                z = nn.Dropout(self.dropout_rate)(z, deterministic=not train)
+
+            q = nn.Dense(1, name=f"{name}_out")(y)
+            return q
+
+        q1 = q_net("q1")
+        q2 = q_net("q2")
+        u = nn.BatchNorm(use_running_average=not train)(q1)  # (batch, 1)
         return q1, q2
 
 
@@ -208,25 +219,26 @@ def defineRLAgent(
             optax.clip_by_global_norm(
                 1.0
             ),  # Gradient clipping with a maximum norm of 1.0
-            optax.inject_hyperparams(optax.adam)(learning_rate=lr_schedule),
+            optax.adam(learning_rate=lr_schedule),
         )
 
-    shared_encoder = CombinedPreprocessor()
-    actor = ActorNet(preprocessor=shared_encoder)
-    critic = CriticNet(preprocessor=shared_encoder)
+    shared_encoder = ParticlePreprocessor()
+    occupancy_encoder = SmallAttentionUNetEncoder()
+    actor = ActorNet(preprocessor=shared_encoder, encoder=occupancy_encoder)
+    critic = CriticNet(preprocessor=shared_encoder, encoder=occupancy_encoder)
 
     # Define a sampling_strategy
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(
         action_dimension=action_dimension, action_limits=action_limits
     )
     exploration_policy = srl.exploration_policies.GlobalOUExploration(
-        drift=0.08,
-        volatility=0.001,
+        drift=0.1,
+        volatility=0.08,
         action_dimension=action_dimension,
         action_limits=action_limits,
     )
 
-    value_function = srl.value_functions.TDReturnsSAC(gamma=0.9, standardize=False)
+    value_function = srl.value_functions.TDReturnsSAC(gamma=0.99, standardize=False)
     actor_network = srl.networks.ContinuousActionModel(
         flax_model=actor,
         optimizer=optimizer,
@@ -257,12 +269,12 @@ def defineRLAgent(
 
     loss = srl.losses.SoftActorCriticGradientLoss(
         value_function=value_function,
-        minimum_entropy=-action_dimension * 2,
-        polyak_averaging_tau=0.02,
+        minimum_entropy=-action_dimension,
+        polyak_averaging_tau=0.1,
         lock=lock,
         validation_split=0.01,
         fix_temperature=False,
-        batch_size=1012,
+        batch_size=110,
     )
 
     protocol = srl.agents.MPIActorCriticAgent(
@@ -272,8 +284,9 @@ def defineRLAgent(
         task=task,
         observable=obs,
         loss=loss,
-        max_samples_in_trajectory=1000,
+        max_samples_in_trajectory=100,
         lock=lock,
     )
-    obs.set_agent(protocol)
+    # protocol.set_optimizer(optimizer)
+    task.set_agent(protocol)
     return protocol

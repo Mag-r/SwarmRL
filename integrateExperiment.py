@@ -1,4 +1,5 @@
 import numpy as np
+from jax import numpy as jnp
 from numba import cuda
 import pathlib
 import logging
@@ -6,6 +7,7 @@ import setupNetwork
 import os
 import pint
 from flax import linen as nn
+import jax
 
 from swarmrl.observables.basler_camera_MPI import BaslerCameraObservable
 from swarmrl.tasks.experiment_chain import ExperimentChainTask
@@ -51,31 +53,47 @@ class Autoencoder(nn.Module):
 
         return nn.sigmoid(x)
 
+
+def edge_pad(x, kernel_size):
+    pad_h = kernel_size[0] // 2
+    pad_w = kernel_size[1] // 2
+    return jnp.pad(
+        x,
+        pad_width=((0, 0), (pad_h, pad_h), (pad_w, pad_w), (0, 0)),
+        mode='edge'
+    )
+
 class OccupancyMapper(nn.Module):
     @nn.compact
     def __call__(self, x):
-        # Encoder
-        x = nn.Conv(16, (3, 3), strides=(1, 1), padding="SAME")(x)
+        x = jnp.clip(x, 0, 1000.0)*(1.0/1000.0)  # Sicherstellen, dass Input in [0,1] ist
+        x = edge_pad(x, (3, 3))
+        x = nn.Conv(16, (3, 3), padding="VALID")(x)
+        x = nn.silu(x)
+
+        x = edge_pad(x, (3, 3))
+        x = nn.Conv(32, (3, 3), padding="VALID")(x)
+        x = nn.silu(x)
+
+        x = edge_pad(x, (3, 3))
+        x = nn.Conv(32, (3, 3), padding="VALID")(x)
+        x = nn.silu(x)
+
+        x = edge_pad(x, (3, 3))
+        x = nn.Conv(16, (3, 3), padding="VALID")(x)
+        x = nn.silu(x)
+
+        x = edge_pad(x, (3, 3))
+        x = nn.Conv(1, (3, 3), padding="VALID")(x)
         x = nn.sigmoid(x)
+        return x
 
-        x = nn.Conv(32, (3, 3), strides=(1, 1), padding="SAME")(x)
-        x = nn.sigmoid(x)
-
-        x = nn.ConvTranspose(32, (3, 3), strides=(1, 1), padding="SAME")(x)
-        x = nn.sigmoid(x)
-
-        x = nn.ConvTranspose(16, (3, 3), strides=(1, 1), padding="SAME")(x)
-        x = nn.sigmoid(x)
-
-        x = nn.Conv(1, (3, 3), strides=(1, 1), padding="SAME")(x)
-
-        return nn.sigmoid(x)
 
 sequence_length = 1
 resolution = 253
 
 number_particles = 30
-learning_rate = 1e-3
+learning_rate = 3e-4
 
 lock = Lock()
 obs = BaslerCameraObservable(
@@ -108,15 +126,15 @@ params = GauravSimParams(
 sim = GauravSim(
     params=params, out_folder="./", with_precalc_capillary=False, save_h5=False
 )
-experiment = GauravExperiment(sim)
+experiment = GauravExperiment(sim, setupNetwork.action_limits)
 
 protocol = setupNetwork.defineRLAgent(
     obs, task, learning_rate=learning_rate, sequence_length=sequence_length, lock=lock, number_particles=number_particles
 )
 
 protocol.restore_agent(identifier=task.__class__.__name__)
-# protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_7")
-# protocol.actor_network.set_temperature(1E-3)
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_1")
+# protocol.actor_network.set_temperature(1E-2)
 rl_trainer = Trainer([protocol], lock=lock, deployment_mode=learning_rate == 0.0)
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(experiment, 1000, 10)

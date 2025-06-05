@@ -40,9 +40,9 @@ class BaslerCameraObservable(Observable, ABC):
         "fps": 10,
         "exposureTime": 5000,
         "width": 2592,
-        "height": 1500,
+        "height": 1300,
         "xOffset": 0,
-        "yOffset": 548,
+        "yOffset": 748,
         "xReverse": False,
         "yReverse": False,
         "scale": 0.5,
@@ -72,7 +72,6 @@ class BaslerCameraObservable(Observable, ABC):
         tlf = pylon.TlFactory.GetInstance()
         detected_cameras = tlf.EnumerateDevices()
         self.camera = None
-        self.image_count = 470
         for cam in detected_cameras:
             serial_number = cam.GetFriendlyName().split()[-1][1:-1]
             if serial_number == self.camParam["camName"]:
@@ -86,12 +85,13 @@ class BaslerCameraObservable(Observable, ABC):
         # if os.path.exists("images"):
         #     shutil.rmtree("images")
         # os.makedirs("images")
+        
         self.image_queue = queue.Queue()
-        self.image_saving_thread = threading.Thread(
-            target=self.save_images_async, daemon=True
-        )
+        # self.image_saving_thread = threading.Thread(
+        #     target=self.save_images_async, daemon=True
+        # )
         self.image_count = 0
-        self.image_saving_thread.start()
+        # self.image_saving_thread.start()
         self.autoencoder = autoencoder
         self.init_autoencoder(model_path)
         self.threshold = 0.6
@@ -178,11 +178,9 @@ class BaslerCameraObservable(Observable, ABC):
                 f"Image queue is starting to fill. Current size {self.image_queue.qsize()}"
             )
         image = cv2.resize(image, (506,506))
-        self.image_queue.put(image.copy())
+        # self.image_queue.put(image.copy())
         image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
-        # image[105:150, 70:180,:] = 0
 
-        self.track_blue_ball(image)
         positions = self.extract_positions(image)
         if positions.shape[1] < self.number_particles:
             padding = self.number_particles - positions.shape[1]
@@ -210,13 +208,12 @@ class BaslerCameraObservable(Observable, ABC):
             logger.warning(
                 f"Number of particles detected {len(positions)} is not equal to the expected number of particles {self.number_particles}."
             )
-            logger.info(f"index of image: {self.image_count}")
             
-        contour_image = onp.array(original_image, dtype=np.uint8)
-        for position in positions:
-            center = tuple([position[1], position[0]])
-            cv2.circle(contour_image, center, 2, (255, 0, 0), -1)
-        self.image_queue.put(contour_image)
+        # contour_image = onp.array(original_image, dtype=np.uint8)
+        # for position in positions:
+        #     center = tuple([position[1], position[0]])
+        #     cv2.circle(contour_image, center, 2, (255, 0, 0), -1)
+        # self.image_queue.put(contour_image)
         return positions.reshape(1, -1, 2)
 
     def peak_detection(self, cleaned_image):

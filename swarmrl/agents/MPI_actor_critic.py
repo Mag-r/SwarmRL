@@ -11,6 +11,8 @@ from threading import Lock
 import jax
 import numpy as np
 from jax import numpy as jnp
+from optax._src.base import GradientTransformation
+
 
 from swarmrl.actions.actions import Action
 from swarmrl.agents.agent import Agent
@@ -183,6 +185,8 @@ class MPIActorCriticAgent(Agent):
             "next_carry": self.trajectory.next_carry,
             "action_sequence": self.trajectory.action_sequence,
             "killed": self.trajectory.killed,
+            "occupancy_map": self.trajectory.occupancy_map,
+            "next_occupancy_map": self.trajectory.next_occupancy_map,
         }
 
         filename = os.path.join(directory, f"trajectory_{identifier}.pkl")
@@ -215,6 +219,8 @@ class MPIActorCriticAgent(Agent):
         self.trajectory.next_carry = trajectory_data["next_carry"]
         self.trajectory.action_sequence = trajectory_data["action_sequence"]
         self.trajectory.killed = trajectory_data["killed"]
+        self.trajectory.occupancy_map = trajectory_data["occupancy_map"] 
+        self.trajectory.next_occupancy_map = trajectory_data["next_occupancy_map"]
         logger.info(
             f"shape of all features: {np.shape(self.trajectory.features)}, shape of all actions: {np.shape(self.trajectory.actions)}, shape of all rewards: {np.shape(self.trajectory.rewards)}"
         )
@@ -226,7 +232,7 @@ class MPIActorCriticAgent(Agent):
             remove (int): Number of elements to remove.
         """
         logger.info(
-            f"shape of all features: {np.shape(self.trajectory.features)}, shape of all actions: {np.shape(self.trajectory.actions)}, shape of all rewards: {np.shape(self.trajectory.rewards)}, shape of feature sequence{np.shape(self.trajectory.feature_sequence)}, shape of action sequence{np.shape(self.trajectory.action_sequence)}, shape of next features{np.shape(self.trajectory.next_features)}"
+            f"shape of all features: {np.shape(self.trajectory.features)},shape of occupancymap{np.shape(self.trajectory.occupancy_map)} shape of all actions: {np.shape(self.trajectory.actions)}, shape of all rewards: {np.shape(self.trajectory.rewards)}, shape of feature sequence{np.shape(self.trajectory.feature_sequence)}, shape of action sequence{np.shape(self.trajectory.action_sequence)}, shape of next features{np.shape(self.trajectory.next_features)}"
         )
         if remove == -1:
             remove = (
@@ -292,6 +298,18 @@ class MPIActorCriticAgent(Agent):
         """
         self.actor_network.reinitialize_network()
         self.critic_network.reinitialize_network()
+        
+    def set_optimizer(self, optimizer: GradientTransformation):
+        """
+        Set the optimizer for the actor and critic networks.
+
+        Parameters
+        ----------
+        optimizer : GradientTransformation
+                Optimizer to use for the networks.
+        """
+        self.actor_network.set_optimizer(optimizer)
+        self.critic_network.set_optimizer(optimizer)
 
     def save_agent(self, directory: str = "Models", identifier: str = "") -> None:
         """
@@ -333,6 +351,10 @@ class MPIActorCriticAgent(Agent):
             filename=f"{self.__name__()}_{self.particle_type}_critic_{identifier}",
             directory=directory,
         )
+        
+    def load_encoder(self, directory: str = "Models", filename: str = "encoder"):
+        self.actor_network.load_encoder(directory=directory, filename=filename)
+        self.critic_network.load_encoder(directory=directory, filename=filename)
 
     def calc_reward(
         self, colloids: typing.List[Colloid], external_reward: float = 0.0
@@ -502,33 +524,37 @@ class MPIActorCriticAgent(Agent):
         occupancy_map : jnp.ndarray
                 Occupancy map to add.
         """
+        x = self.trajectory.features[0, -1, :, 0]
+        y = self.trajectory.features[0, -1, :, 1]
 
-        with self.lock:
-            if self.trajectory.occupancy_map.size == 0:
-                x = self.trajectory.features[0, -1, :, 0]
-                y = self.trajectory.features[0, -1, :, 1]
+        x = (x * self.resolution_map / self.observable.resolution[0]).astype(
+            int
+        )
+        y = (y * self.resolution_map / self.observable.resolution[1]).astype(
+            int
+        )
 
-                x = (x * self.resolution_map / self.observable.resolution[0]).astype(
-                    int
-                )
-                y = (y * self.resolution_map / self.observable.resolution[1]).astype(
-                    int
-                )
-                occupancy_map = np.zeros(
-                    (self.resolution_map, self.resolution_map), dtype=np.int32
-                )
-                occupancy_map[x, y] += 1
+        if len(self.trajectory.occupancy_map) == 0:
+            x = self.trajectory.features[0, -1, :, 0]
+            y = self.trajectory.features[0, -1, :, 1]
 
-            else:
-                x = self.trajectory.features[0, -1, :, 0]
-                y = self.trajectory.features[0, -1, :, 1]
+            x = (x * self.resolution_map / self.observable.resolution[0]).astype(
+                int
+            )
+            y = (y * self.resolution_map / self.observable.resolution[1]).astype(
+                int
+            )
+            occupancy_map = np.zeros(
+                (self.resolution_map, self.resolution_map), dtype=np.int32
+            )
+            occupancy_map[x, y] += 1
 
-                x = (x * self.resolution_map / self.observable.resolution[0]).astype(
-                    int
-                )
-                y = (y * self.resolution_map / self.observable.resolution[1]).astype(
-                    int
-                )
-                occupancy_map = self.trajectory.occupancy_map[-1].copy()
-                occupancy_map[x, y] += 1
-        return occupancy_map[np.newaxis, ...]
+        else:
+
+            occupancy_map = self.trajectory.occupancy_map[-1].copy().squeeze()
+            occupancy_map[x, y] += 1
+
+        occupancy_map = np.reshape(
+            occupancy_map, (1,1, self.resolution_map, self.resolution_map, 1) # B,T,res,res,C
+        )
+        return occupancy_map # Add batch, time and channel dimensions
