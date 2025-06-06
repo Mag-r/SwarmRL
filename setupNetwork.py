@@ -64,6 +64,8 @@ class ParticlePreprocessor(nn.Module):
             x = nn.Dense(self.hidden_dim,
                          kernel_init=nn.initializers.kaiming_normal())(x)
             x = nn.silu(x)
+            x = nn.LayerNorm()(x)
+            x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=not train)
             return x
 
         # Flatten batch & time so we can vmap over particles easily
@@ -129,7 +131,7 @@ class ParticlePreprocessor(nn.Module):
 class ActorNet(nn.Module):
     """SAC Gaussian actor with DeepSets+GCN preprocessor."""
     preprocessor: Any          # ParticlePreprocessor(shared)
-    hidden_dims: Tuple[int, ...] = (128, 64)
+    hidden_dims: Tuple[int, ...] = (128, 64,32)
     log_std_min: float = -10.0
     log_std_max: float = 0.5
     dropout_rate: float = 0.1
@@ -194,7 +196,7 @@ class ActorNet(nn.Module):
 class CriticNet(nn.Module):
     """Twin‐Q SAC critic with DeepSets+GCN preprocessor."""
     preprocessor: Any
-    hidden_dims: Tuple[int, ...] = (128, 64)
+    hidden_dims: Tuple[int, ...] = (128, 64,32)
     dropout_rate: float = 0.1
 
     @nn.compact
