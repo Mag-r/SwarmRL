@@ -30,6 +30,20 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
         # if self.action_limits:
         #     assert jnp.shape(self.action_limits) == (self.action_dimension, 2), f"Action limits must have shape ({self.action_dimension}, 2). Has shape {jnp.shape(self.action_limits)}"
 
+    def squash_action(self, action: jnp.ndarray) -> jnp.ndarray:
+        """
+        Squashes the action to the range indicated by action_limits using tanh.
+        Args:
+            action (jnp.ndarray): Shape (batch_size, action_dim)
+        Returns:
+            jnp.ndarray: Shape (batch_size, action_dim)
+        """
+        low = self.action_limits[:, 0]
+        high = self.action_limits[:, 1]
+        scale = (high - low) / 2.0
+        mid = (high + low) / 2.0
+        return jnp.tanh(action) * scale + mid
+
 
     @partial(
         jax.jit, static_argnames=["self", "deployment_mode", "calculate_log_probs"]
@@ -58,7 +72,7 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
 
         mean = logits[:, : self.action_dimension]
         if deployment_mode:
-            action = mean
+            pre_squash_action = mean
             log_probs = None
         else:
             epsilon = 1e-7
@@ -66,16 +80,18 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             log_std = jnp.clip(log_std, -20, 1)
             std = jnp.exp(log_std)
 
-            action = jax.random.normal(subkey, shape=mean.shape) * std + mean
+            pre_squash_action = jax.random.normal(subkey, shape=mean.shape) * std + mean
 
             if calculate_log_probs:
-                log_probs = -0.5 * (((action - mean) / std) ** 2 + 2 * jnp.log(std) + self.LOG_TWO_PI)
+                log_probs = -0.5 * (((pre_squash_action - mean) / std) ** 2 + 2 * jnp.log(std) + self.LOG_TWO_PI)
                 log_probs = log_probs.sum(axis=-1)
 
-                correction = (2*(jnp.log(2)-action-jax.nn.softplus(-2*action))).sum(axis=-1)
+                correction = (2*(jnp.log(2)-pre_squash_action-jax.nn.softplus(-2*pre_squash_action))).sum(axis=-1)
                 log_probs = log_probs - correction
             else:
                 log_probs = None
-        
-        # logger.debug(f"{action=}, {log_probs=}, with shape {action.shape}")
+        action = (
+            self.squash_action(pre_squash_action) if self.action_limits is not None else pre_squash_action
+        )
+        logger.debug(f"{action=}, {log_probs=}, with shape {action.shape}")
         return action, log_probs

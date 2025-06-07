@@ -182,12 +182,10 @@ class BaslerCameraObservable(Observable, ABC):
         image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
 
         positions = self.extract_positions(image)
-        if positions.shape[1] < self.number_particles:
+        while positions.shape[1] < self.number_particles:
             padding = self.number_particles - positions.shape[1]
             padding = positions[:, :padding, :].copy()
             positions = np.concatenate((positions, padding), axis=1)
-        elif positions.shape[1] > self.number_particles:
-            positions = positions[:, : self.number_particles, :]
         return positions
 
     def extract_positions(self, original_image: np.ndarray) -> np.ndarray:

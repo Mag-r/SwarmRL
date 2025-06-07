@@ -191,13 +191,11 @@ class ContinuousActionModel(Network, ABC):
                 Temperature of the model.
         """
         params = flax.core.unfreeze(self.model_state.params)
-        logger.info(f"current value and shape of temperature: {params['temperature'], jnp.shape(params['temperature'])}")
         params["temperature"] = jnp.array([jnp.log(exp_temperature)])  
         self.model_state = self.model_state.replace(
             params=flax.core.freeze(params),
         )
-        logger.info(f"new value and shape of temperature: {params['temperature'], jnp.shape(params['temperature'])}")
-        logger.info(f"Temperature set to {exp_temperature}")
+
         
     def update_model(self, grads, updated_batch_stats=None):
         """
@@ -208,16 +206,6 @@ class ContinuousActionModel(Network, ABC):
         # Logging for grads and pre-train model state
         logger.debug(f"{grads=}")
         logger.debug(f"{self.model_state=}")
-
-        # Validate gradients
-        def validate_grad(grad):
-            if grad is None or not isinstance(grad, jnp.ndarray):
-                logger.error(f"Invalid gradient detected: {grad}")
-                return jnp.zeros_like(grad) if grad is not None else grad
-            return grad
-
-        grads = jax.tree_util.tree_map(validate_grad, grads)
-
         if isinstance(self.optimizer, dict):
             raise NotImplementedError
         else:

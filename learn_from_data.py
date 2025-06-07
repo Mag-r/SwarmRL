@@ -23,8 +23,11 @@ logging.basicConfig(
 )
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-action_dimension = 6
-action_limits = jnp.array([[0,70],[0,70],[0,30], [0,30], [-0.8, 0.8], [-0.5, 0.5]])
+action_dimension = 2
+action_limits = jnp.array(
+    [[-1.0, 1.0], [-0.7, 0.7]]
+)
+
 
 import jax
 import jax.numpy as jnp
@@ -33,20 +36,16 @@ from typing import Tuple, Any
 
 
 
-
 class ParticlePreprocessor(nn.Module):
-    hidden_dim: int = 32
-    num_heads: int = 2
+    hidden_dim: int = 12
+    num_heads: int = 4
     dropout_rate: float = 0.1
 
     @nn.compact
     def __call__(self, state: jnp.ndarray, train: bool = False) -> jnp.ndarray:
         b, t, n, d = state.shape
         pos = state.reshape(b * t, n, d)
-
-
         x = nn.Dense(self.hidden_dim)(pos)
-
         pe = self.param("pos_encoding", nn.initializers.normal(0.02), (pos.shape[1], self.hidden_dim))
         x = x + pe
 
@@ -64,14 +63,7 @@ class ParticlePreprocessor(nn.Module):
             dropout_rate=self.dropout_rate,
             deterministic=not train
         )(y)
-        x = x + y  # Residual
-
-        y = nn.LayerNorm()(x)
-        y = nn.Dense(self.hidden_dim)(y)
-        y = nn.silu(y)
-        y = nn.Dropout(rate=self.dropout_rate)(y, deterministic=not train)
-        y = nn.Dense(self.hidden_dim)(y)
-        return x + y  # Residual
+        return y
 
     
 class SmallAttentionUNetEncoder(nn.Module):
@@ -79,56 +71,30 @@ class SmallAttentionUNetEncoder(nn.Module):
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        x = jnp.clip(x, 0, 1000.0)/1000.0  
-        e1 = nn.Conv(features=8, kernel_size=(3, 3), strides=(2, 2), padding="SAME", name="enc_conv_0")(
+        x = jnp.clip(x, 0, 1000.0)* (1.0/1000.0)  
+        e1 = nn.Conv(features=4, kernel_size=(3, 3), strides=(2, 2), padding="SAME", name="enc_conv_0")(
             x
         )  # (32,32,16)
         e1 = nn.silu(e1)
-        e2 = nn.Conv(features=16, kernel_size=(3, 3), strides=(2, 2), padding="SAME", name="enc_conv_1")(
+        e2 = nn.Conv(features=8, kernel_size=(3, 3), strides=(2, 2), padding="SAME", name="enc_conv_1")(
             e1
         )  # (16,16,32)
         e2 = nn.silu(e2)
-        e3 = nn.Conv(features=32, kernel_size=(3, 3), strides=(2, 2), padding="SAME", name="enc_conv_2")(
+        e3 = nn.Conv(features=16, kernel_size=(3, 3), strides=(2, 2), padding="SAME", name="enc_conv_2")(
             e2
         )  # (8, 8,48)
         e3 = nn.silu(e3)
-        # Self-Attention bottleneck
-        
-        # b = self.attention_helper(e3.reshape((-1,8,8,32)))  # (B, 8, 8, 32)
-        b = e3.reshape((-1, 8, 8, 32))  # (B, 8, 8, 32)
-        b = jnp.mean(b, axis=(1, 2))  # (B, 32) - Global Average Pooling
-        return b.reshape(x.shape[0], -1)  # Flattened
-    def attention_helper(self, x):
-        B, H, W, C = x.shape
-        # 1) Query/Key: reduzierte Dimension C//8, Value: C
-        query = nn.Conv(features=C // 8, kernel_size=(1, 1), padding="SAME", name="enc_attention_q")(x)
-        key = nn.Conv(features=C // 8, kernel_size=(1, 1), padding="SAME", name="enc_attention_k")(x)
-        value = nn.Conv(features=C, kernel_size=(1, 1), padding="SAME", name="enc_attention_v")(x)
 
-        # Flatten räumlich in (B, N, D)
-        N = H * W
-        q_flat = query.reshape((B, N, C // 8))  # (B, 64, C//8)
-        k_flat = key.reshape((B, N, C // 8))  # (B, 64, C//8)
-        v_flat = value.reshape((B, N, C))  # (B, 64, C)
+        b = jnp.mean(e3, axis=(1, 2))  # ergibt direkt Shape (B,16)
+        return b
 
-        # 2) Attention‐Score: (B, N, N)
-        attn_scores = jnp.einsum("bqi,bki->bqk", q_flat, k_flat)  # (B,64,64)
-        attn_weights = nn.softmax(attn_scores, axis=-1)  # (B,64,64)
-
-        # 3) Weighted Sum für Output
-        attn_out = jnp.einsum("bqk,bkv->bqv", attn_weights, v_flat)  # (B,64,C)
-        attn_out = attn_out.reshape((B, H, W, C))  # (B,8,8,C)
-
-        # 4) Learnable Skalierungs-Parameter gamma
-        gamma = self.param("gamma", nn.initializers.zeros, (1,))
-        return x + gamma * attn_out
 
 class ActorNet(nn.Module):
     """SAC Gaussian actor producing mean & log-std, keeps your original signature."""
 
     preprocessor: Any  # e.g. ParticlePreprocessor()
     encoder: Any 
-    hidden_dim: int = 64
+    hidden_dim: int = 12
     log_std_min: float = -15.0
     log_std_max: float = 1.0
     dropout_rate: float = 0.1
@@ -172,20 +138,21 @@ class ActorNet(nn.Module):
 
         occ = self.encoder(occupancy_map.reshape((-1,64,64,1)))  # (batch, hidden_dim)
         x = jnp.concatenate([x, occ], axis=-1)  # (batch, t*h + hidden_dim)
-        for _ in range(2):
+        x = nn.LayerNorm()(x)  # (batch, t*h + hidden_dim)
+        x = nn.Dense(self.hidden_dim)(x)  # (batch, hidden_dim)
+        x = nn.silu(x)  # (batch, hidden_dim)
+        for _ in range(4):
             y = nn.LayerNorm()(x)
             y = nn.Dense(self.hidden_dim)(y)
             y = nn.silu(y)
-            y = nn.Dropout(self.dropout_rate)(y, deterministic=not train)
-            x = x + y
 
-        mu = nn.Dense(action_dimension)(x)
+
+        mu = nn.Dense(action_dimension)(y)
         mu = jnp.tanh(mu) * 3.0
-        log_std = nn.Dense(action_dimension)(x)
+        log_std = nn.Dense(action_dimension)(y)
         log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
 
         out = jnp.concatenate([mu, log_std], axis=-1)
-        y
         z= nn.BatchNorm(use_running_average=not train)(out)  # (batch, action_dim*2)
         return out, carry
 
@@ -195,7 +162,7 @@ class CriticNet(nn.Module):
 
     preprocessor: Any  # e.g. ParticlePreprocessor()
     encoder: Any
-    hidden_dim: int = 96
+    hidden_dim: int = 12
     dropout_rate: float = 0.1
 
     @nn.compact
@@ -220,22 +187,21 @@ class CriticNet(nn.Module):
         x = self.preprocessor(state / 253.0, train)  # (batch, time, hidden_dim)
 
         occ = self.encoder(occupancy_map.reshape((-1,64,64,1)))  # (batch, hidden_dim)
+        a_norm = action - jnp.array(action_limits[:, 0])  
+        a_norm = a_norm / (jnp.array(action_limits[:, 1]) - jnp.array(action_limits[:, 0]))
 
-
-        a_norm = (action - action_limits[:, 0]) / (action_limits[:, 1] - action_limits[:, 0])
-        a_norm = nn.Dense(32)(a_norm)  # (batch, hidden_dim)
-        a_norm = nn.LayerNorm()(a_norm)
-        a_norm = nn.Dropout(self.dropout_rate)(a_norm, deterministic=not train)
         sa = jnp.concatenate([x, a_norm, occ], axis=-1)
+        sa = nn.Dense(self.hidden_dim)(sa)  # (batch, hidden_dim)
+        sa = nn.silu(sa)  # (batch, hidden_dim)
 
         def q_net(name: str):
             y = sa
-            for i in range(2):
+            for i in range(4):
                 z = nn.LayerNorm()(y)
                 z = nn.Dense(self.hidden_dim, name=f"{name}_fc{i}")(z)
                 z = nn.silu(z)
                 z = nn.Dropout(self.dropout_rate)(z, deterministic=not train)
-                y = y + z
+
             q = nn.Dense(1, name=f"{name}_out")(y)
             return q
 
@@ -243,6 +209,7 @@ class CriticNet(nn.Module):
         q2 = q_net("q2")
         u = nn.BatchNorm(use_running_average=not train)(q1)  # (batch, 1)
         return q1, q2
+
 
 
 def edge_pad(x, kernel_size):
@@ -307,8 +274,6 @@ shared_encoder = SmallAttentionUNetEncoder()
 actor  = ActorNet(preprocessor=shared_preprocessor, encoder=shared_encoder)
 critic = CriticNet(preprocessor=shared_preprocessor, encoder=shared_encoder)
 
-action_limits = jnp.array([[0,70],[0,70],[0,50], [0,50], [-0.8, 0.8], [-0.5, 0.5]])
-
 
 # Define a sampling_strategy
 sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(action_dimension=action_dimension, action_limits=action_limits)
@@ -368,7 +333,7 @@ engine = OfflineLearning()
 
 
 protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_4")
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_2")
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(engine, 10000, 10)

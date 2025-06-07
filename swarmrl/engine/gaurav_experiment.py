@@ -16,12 +16,12 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6340
+    labview_port = 6342
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  
 
-    def __init__(self, simulation: GauravSim, action_limits: jnp.ndarray, update_rate: float = 20.0):
+    def __init__(self, simulation: GauravSim, update_rate: float = 20.0):
         super().__init__()
         self.simulation = simulation
         self.update_rate = update_rate
@@ -35,7 +35,6 @@ class GauravExperiment(Engine):
         self.establish_connection()
         self.lock = threading.Lock()
         self.keeping_time = 6
-        self.action_limits = action_limits 
 
     def establish_connection(self):
         """Establish TCP connections with LabVIEW"""
@@ -151,23 +150,8 @@ class GauravExperiment(Engine):
         seperation_action = MPIAction(
             magnitude=[100, 100], frequency=[30, 30], keep_magnetic_field=10
         )
-        # self.send_action(seperation_action)
+        self.send_action(seperation_action)
         time.sleep(10)
-        pass
-
-    def squash_action(self, action: jnp.ndarray) -> jnp.ndarray:
-        """
-        Squashes the action to the range indicated by action_limits using tanh.
-        Args:
-            action (jnp.ndarray): Shape (batch_size, action_dim)
-        Returns:
-            jnp.ndarray: Shape (batch_size, action_dim)
-        """
-        low = self.action_limits[:, 0]
-        high = self.action_limits[:, 1]
-        scale = (high - low) / 2.0
-        mid = (high + low) / 2.0
-        return jnp.tanh(action) * scale + mid
     
     
     def integrate(self, n_slices: int, force_model: GlobalForceFunction):
@@ -177,10 +161,8 @@ class GauravExperiment(Engine):
         start = time.time()
         for _ in range(n_slices):
             action = force_model.calc_action(None)
-            action = self.squash_action(action.reshape(1, -1)).squeeze()
-            
             action = MPIAction(
-                magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=1, gradient=action[4:6]
+                magnitude=[80,80], frequency=[6,6], keep_magnetic_field=1, gradient=action
             )
             self.send_action(action)
             sleeping_time = max(0, self.keeping_time - (time.time() - start))

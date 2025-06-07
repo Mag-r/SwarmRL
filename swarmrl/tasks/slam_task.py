@@ -47,6 +47,7 @@ class MappingTask(Task):
         self.image_saving_thread.start()
         self.iterations = 0
         self.previous_certain_cells = 0
+        self.previous_reward = 0.0
 
     def init_mapper(self, model_path: str = None):
         params = self.mapper.init(jax.random.PRNGKey(0), jnp.ones((1, 64,64, 1)))
@@ -67,7 +68,7 @@ class MappingTask(Task):
         while True:
             if not self.image_queue.empty():
                 occupancy_map = self.image_queue.get()
-                file_path = os.path.join(folder, "predicted_arena.png")
+                file_path = os.path.join(folder, f"predicted_arena_{self.iterations:04d}.png")
                 plt.imsave(file_path, occupancy_map, cmap='gray')
 
 
@@ -92,7 +93,8 @@ class MappingTask(Task):
             reward = jnp.linalg.norm(predicted_arena - 0.75)
             number_certain_cells = jnp.sum(jnp.abs(predicted_arena - 0.5)>0.45)/64.0
             logger.info(f"Certain cells: {number_certain_cells/0.64}%, difference to previous: {(number_certain_cells - self.previous_certain_cells)*64}")
-            reward += number_certain_cells - self.previous_certain_cells
+            reward += number_certain_cells
+            reward, self.previous_reward = reward - self.previous_reward, reward
             self.previous_certain_cells = number_certain_cells
             logger.info(f"Reward: {reward}, time taken: {time.time() - start}")
             return reward

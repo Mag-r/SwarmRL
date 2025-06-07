@@ -16,12 +16,10 @@ from flax import linen as nn
 import time
 
 logger = logging.getLogger(__name__)
-action_dimension = 6
+action_dimension = 2
 action_limits = jnp.array(
-    [[0, 80], [0, 80], [0, 20], [0, 20], [-0.8, 0.8], [-0.5, 0.5]]
+    [[-1.0, 1.0], [-0.7, 0.7]]
 )
-
-
 
 class ParticlePreprocessor(nn.Module):
     hidden_dim: int = 12
@@ -58,6 +56,7 @@ class SmallAttentionUNetEncoder(nn.Module):
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        x = x.astype(jnp.bfloat16)  
         x = jnp.clip(x, 0, 1000.0)* (1.0/1000.0)  
         e1 = nn.Conv(features=4, kernel_size=(3, 3), strides=(2, 2), padding="SAME", name="enc_conv_0")(
             x
@@ -134,7 +133,7 @@ class ActorNet(nn.Module):
             y = nn.silu(y)
 
 
-        mu = nn.Dense(action_dimension)(x)
+        mu = nn.Dense(action_dimension)(y)
         mu = jnp.tanh(mu) * 3.0
         log_std = nn.Dense(action_dimension)(x)
         log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
@@ -174,8 +173,10 @@ class CriticNet(nn.Module):
         x = self.preprocessor(state / 253.0, train)  # (batch, time, hidden_dim)
 
         occ = self.encoder(occupancy_map.reshape((-1,64,64,1)))  # (batch, hidden_dim)
+        a_norm = action - jnp.array(action_limits[:, 0])  
+        a_norm = a_norm / (jnp.array(action_limits[:, 1]) - jnp.array(action_limits[:, 0]))
 
-        sa = jnp.concatenate([x, action, occ], axis=-1)
+        sa = jnp.concatenate([x, a_norm, occ], axis=-1)
         sa = nn.Dense(self.hidden_dim)(sa)  # (batch, hidden_dim)
         sa = nn.silu(sa)  # (batch, hidden_dim)
 
@@ -269,7 +270,7 @@ def defineRLAgent(
 
     loss = srl.losses.SoftActorCriticGradientLoss(
         value_function=value_function,
-        minimum_entropy=-action_dimension,
+        minimum_entropy=-action_dimension*5,
         polyak_averaging_tau=0.1,
         lock=lock,
         validation_split=0.01,

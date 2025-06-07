@@ -394,8 +394,7 @@ class ContinuousCriticModel(Network, ABC):
                 batch_stats_critic,
                 batch_stats_target,
             ) = pickle.load(f)
-        print("type of current opt_state:", type(self.critic_state.opt_state))
-        print("type of loaded opt_state:", type(opt_state_critic))
+
         self.critic_state = self.critic_state.replace(
             params=model_params_critics,
             opt_state=opt_state_critic,
