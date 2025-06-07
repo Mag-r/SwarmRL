@@ -49,8 +49,7 @@ class ParticlePreprocessor(nn.Module):
     def __call__(self, state: jnp.ndarray, train: bool = False) -> jnp.ndarray:
         b, t, n, d = state.shape
         state = state.reshape(b * t, n, d)
-        pos = state[:, :-2, :]
-        vel = state[:, -2:, :]
+        pos = state[:, :, :]
 
         x = nn.Dense(self.hidden_dim)(pos)
 
@@ -64,18 +63,14 @@ class ParticlePreprocessor(nn.Module):
         x = AttentionBlock(self.hidden_dim, self.num_heads)(x, train)
         x = jnp.mean(x, axis=1)
 
-        v = vel.reshape(b * t, -1)
-        v = nn.Dense(4)(v)
-        v = nn.silu(v)
-
-        return jnp.concatenate([x, v], axis=-1)
+        return x
 
 class ActorNet(nn.Module):
     """A simple dense model.
     (batch,time,features)
     When dense at beginning, probably flatten is required
     """
- 
+    preprocessor: Any = None  # Placeholder for preprocessor
     def setup(self):
         # Define a scanned LSTM cell
         self.ScanLSTM = nn.scan(
@@ -96,17 +91,16 @@ class ActorNet(nn.Module):
             carry = self.lstm.initialize_carry(
                 jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
             )
-        mean = self.param("mean", nn.initializers.zeros, (action_dimension,))
-        std = self.param("std", lambda key, shape: jnp.full(shape, -1.0), (action_dimension,))
-        batch_size= x.shape[0]
         nn.BatchNorm(use_running_average=not train)(x)
-        mean = jnp.tile(mean, (batch_size, 1))
-        std = jnp.tile(std, (batch_size, 1))
+        x = self.preprocessor(x, train=train)
+        mean = nn.Dense(features=action_dimension, name="Actor_mean")(x)
+        std = nn.Dense(features=action_dimension, name="Actor_std")(x)
         actor = jnp.concatenate([mean, std], axis=-1)
         return actor, carry
 
 
 class CriticNet(nn.Module):
+    preprocessor: Any  # ParticlePreprocessor
     def setup(self):
         # Define a scanned LSTM cell
         self.ScanLSTM = nn.scan(
@@ -121,11 +115,7 @@ class CriticNet(nn.Module):
     @nn.compact
     def __call__(self, x, previous_actions, action, carry=None, train:bool = False):
         batch_size, sequence_length = x.shape[0], x.shape[1]
-        x = x.reshape((batch_size, -1))
-        mean = jnp.mean(x, keepdims=True)
-        std = jnp.std(x, keepdims=True)
-        x = (x - mean) / (std + 1e-6)
-        x = x.reshape((batch_size, -1))
+        x = self.preprocessor(x, train=train)
         x = jnp.concatenate([x, action], axis=-1)
         q_1 = nn.Dense(features=12, name="Critic_1")(x)
         q_2 = nn.Dense(features=12, name="Critic_2")(x)

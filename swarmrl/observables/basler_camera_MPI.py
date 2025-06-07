@@ -95,29 +95,7 @@ class BaslerCameraObservable(Observable, ABC):
         self.autoencoder = autoencoder
         self.init_autoencoder(model_path)
         self.threshold = 0.6
-        self.init_blob_detector()
-        self.blue_ball_position = np.zeros((1, 1, 2))
-        self.blue_ball_velocity = np.zeros((1, 1, 2))
-        self.target = np.zeros((1, 1, 2))
-        self.com_velocity = np.zeros((1, 1, 2))
-        self.com_position = np.zeros((1, 1, 2))
 
-    def init_blob_detector(self):
-        """
-        Initialize the blob detector.
-        """
-        blob_detection_params = cv2.SimpleBlobDetector_Params()
-        blob_detection_params.filterByArea = True
-        blob_detection_params.maxArea = 100
-        blob_detection_params.minArea = 20
-        blob_detection_params.filterByCircularity = False
-        blob_detection_params.minCircularity = 0.5
-        blob_detection_params.maxCircularity = 1.0
-        blob_detection_params.filterByConvexity = False
-        blob_detection_params.filterByInertia = False
-        blob_detection_params.filterByColor = True
-        blob_detection_params.blobColor = 255
-        self.blob_detector = cv2.SimpleBlobDetector_create(blob_detection_params)
 
     def init_autoencoder(self, model_path: str = None):
         """Initialize the autoencoder.
@@ -203,34 +181,13 @@ class BaslerCameraObservable(Observable, ABC):
         image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
         # image[105:150, 70:180,:] = 0
 
-        self.track_blue_ball(image)
         positions = self.extract_positions(image)
-        if positions.shape[1] < self.number_particles:
+        while positions.shape[1] < self.number_particles:
             padding = self.number_particles - positions.shape[1]
             padding = positions[:, :padding, :].copy()
             positions = np.concatenate((positions, padding), axis=1)
-        elif positions.shape[1] > self.number_particles:
-            positions = positions[:, : self.number_particles, :]
-        positions = np.concatenate((positions, self.com_position), axis=1)
-        positions = np.concatenate((positions, self.blue_ball_position), axis=1)
-        positions = np.concatenate((positions, self.com_velocity), axis=1)
-        positions = np.concatenate((positions, self.blue_ball_velocity), axis=1)
         return positions
 
-    def track_blue_ball(self, image: onp.ndarray):
-        """Gets the position of the blue ball in the image. Only works if the blue ball is the only blue object in the image.
-
-        Args:
-            image (onp.ndarray): RGB image of the camera.
-        """
-        thresholded_image = (image[:,:,2]>120) & (image[:,:,2]-image[:,:,0]>60) & (image[:,:,2]-image[:,:,1]>60) & (image[:,:,0]<180)
-        keypoints = self.blob_detector.detect(thresholded_image.astype(onp.uint8) * 255)
-
-        if len(keypoints) == 1:
-            self.blue_ball_velocity = np.array(keypoints[0].pt).reshape(1, 1, 2) - self.blue_ball_position 
-            self.blue_ball_position = np.array(keypoints[0].pt).reshape(1, 1, 2)
-        else:
-            logger.warning(f"detected {len(keypoints)} keypoints, expected 1, using previous position {self.blue_ball_position}")
 
     def extract_positions(self, original_image: np.ndarray) -> np.ndarray:
         """
