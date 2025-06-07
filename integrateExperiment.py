@@ -54,16 +54,16 @@ class Autoencoder(nn.Module):
 sequence_length = 1
 resolution = 253
 
-number_particles = 30
+number_particles = 7
 learning_rate = 5e-3
 
 obs = BaslerCameraObservable(
     [resolution, resolution], Autoencoder(), model_path="Models/autoencoder_5_9.pkl", number_particles=number_particles
 )
 # task = ExperimentTask(number_particles=number_particles)
-# task = ExperimentHexagonTask(number_particles=number_particles)
+task = ExperimentHexagonTask(number_particles=number_particles)
 # task = ExperimentBallMovingTask()
-task = BallRacingTask()
+# task = BallRacingTask()
 ureg = pint.UnitRegistry()
 Q_ = ureg.Quantity
 
@@ -98,8 +98,8 @@ protocol = setupNetwork.defineRLAgent(
     obs, task, learning_rate=learning_rate, sequence_length=sequence_length, lock=lock, number_particles=number_particles
 )
 
-protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_7")
+# protocol.restore_agent(identifier=task.__class__.__name__)
+# protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_7")
 # protocol.actor_network.set_temperature(1E-1)
 rl_trainer = Trainer([protocol], lock=lock, deployment_mode=learning_rate == 0.0)
 print("start training", flush=True)
