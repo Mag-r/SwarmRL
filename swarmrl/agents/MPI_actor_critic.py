@@ -108,7 +108,6 @@ class MPIActorCriticAgent(Agent):
         # Collect data for returns.
         rewards = self.trajectory.rewards
         killed = self.trajectory.killed
-
         # Compute loss for actor and critic.
         logger.debug("Computing loss.")
         self.loss.compute_loss(
@@ -274,7 +273,7 @@ class MPIActorCriticAgent(Agent):
         Initialize all of the models in the gym.
         """
         self.actor_network.reinitialize_network()
-        self.critic_network.reinitialize_network()
+        # self.critic_network.reinitialize_network()
 
     def save_agent(self, directory: str = "Models", identifier: str = "") -> None:
         """

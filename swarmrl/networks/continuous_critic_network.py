@@ -8,11 +8,13 @@ import pickle
 from abc import ABC
 from typing import List
 
+import flax.core
 import jax
 import jax.numpy as np
 import numpy as onp
 from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict
+import flax
 from optax._src.base import GradientTransformation
 
 from swarmrl.networks.custom_train_state import CustomTrainState
@@ -392,13 +394,13 @@ class ContinuousCriticModel(Network, ABC):
 
         self.critic_state = self.critic_state.replace(
             params=model_params_critics,
-            # opt_state=opt_state_critic,
+            opt_state=opt_state_critic,
             # step=opt_step_critic,
             batch_stats=batch_stats_critic,
         )
         self.target_state = self.target_state.replace(
             params=model_params_target,
-            # opt_state=opt_state_target,
+            opt_state=opt_state_target,
             # step=opt_step_target,
             batch_stats=batch_stats_target,
         )
@@ -407,39 +409,48 @@ class ContinuousCriticModel(Network, ABC):
 
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
         
-    def load_particle_preprocessor_params(self, filename: str, directory: str = "Models"):
+    def restore_preprocessor_state(self,
+                                filename: str = "model",
+                                directory: str = "Models"):
         """
-        Load only the parameters of the ParticlePreprocessor from a saved model.
+        Restore only the preprocessor’s parameters (and batch_stats) from a checkpoint.
 
         Parameters
         ----------
         filename : str
-            Name of the model state file.
+            Name of the pickle file (without .pkl)
         directory : str
-            Path to the model state file.
-
-        Updates
-        -------
-        Updates the ParticlePreprocessor parameters in the current model.
+            Directory where the file lives.
         """
-        # Load the saved model state
-        with open(os.path.join(directory, filename + ".pkl"), "rb") as f:
-            model_params, _, _, _, _, _ = pickle.load(f)
+        with open(f"{directory}/{filename}.pkl", "rb") as f:
+            model_params, opt_state, opt_step, epoch, carry, batch_stats = pickle.load(f)
 
-        # Extract ParticlePreprocessor parameters
-        particle_preprocessor_params = {
-            k: v for k, v in model_params.items() if "ParticlePreprocessor" in k
-        }
+        pre_params = model_params["preprocessor"]
+        pre_batch_stats = batch_stats.get("preprocessor", None)
 
-        # Update the current model's ParticlePreprocessor parameters
-        current_params = self.critic_state.params
-        updated_params = {**current_params, **particle_preprocessor_params}
-        self.criitc_state = self.critic_state.replace(params=updated_params)
-        current_params = self.target_state.params
-        updated_params = {**current_params, **particle_preprocessor_params}
-        self.target_state = self.target_state.replace(params=updated_params)
+        critic_state = flax.core.unfreeze(self.critic_state)
+        target_state = flax.core.unfreeze(self.target_state)
 
-        logger.info("ParticlePreprocessor parameters successfully loaded.")
+        critic_state["params"]["preprocessor"] = pre_params
+        target_state["params"]["preprocessor"] = pre_params
+        
+        if pre_batch_stats is not None:
+            critic_state["batch_stats"]["preprocessor"] = pre_batch_stats
+            target_state["batch_stats"]["preprocessor"] = pre_batch_stats
+
+        self.critic_state = self.critic_state.replace(
+            params=flax.core.freeze(critic_state["params"]),
+            batch_stats=flax.core.freeze(critic_state["batch_stats"]),
+            step=self.critic_state.step, 
+            opt_state=self.critic_state.opt_state, 
+        )
+        self.target_state = self.target_state.replace(
+            params=flax.core.freeze(target_state["params"]),
+            batch_stats=flax.core.freeze(target_state["batch_stats"]),
+            step=self.target_state.step, 
+            opt_state=self.target_state.opt_state, 
+        )
+        logger.info("Preprocessor parameters restored.")
 
     def polyak_averaging(self, tau: float = 0.005):
         """

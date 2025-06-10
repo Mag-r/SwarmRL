@@ -39,10 +39,10 @@ class BaslerCameraObservable(Observable, ABC):
         "topicName": "/image",
         "fps": 10,
         "exposureTime": 5000,
-        "width": 2592,
-        "height": 1500,
+        "width": 2048,
+        "height": 2048,
         "xOffset": 0,
-        "yOffset": 548,
+        "yOffset": 0,
         "xReverse": False,
         "yReverse": False,
         "scale": 0.5,
@@ -94,7 +94,7 @@ class BaslerCameraObservable(Observable, ABC):
         self.image_saving_thread.start()
         self.autoencoder = autoencoder
         self.init_autoencoder(model_path)
-        self.threshold = 0.6
+        self.threshold = 0.4
 
 
     def init_autoencoder(self, model_path: str = None):
@@ -208,23 +208,19 @@ class BaslerCameraObservable(Observable, ABC):
                 f"Number of particles detected {len(positions)} is not equal to the expected number of particles {self.number_particles}."
             )
             logger.info(f"index of image: {self.image_count}")
+            if len(positions) ==0:
+                plt.imsave(
+                    f"images/cleaned_image_.png",
+                    np.array(cleaned_image.squeeze(), dtype=np.uint8),
+                )
+                raise ValueError(
+                    "No particles detected. Is the light on?."
+                )
             
         contour_image = onp.array(original_image, dtype=np.uint8)
-        mean_x = 0
-        mean_y = 0
         for position in positions:
             center = tuple([position[1], position[0]])
-            mean_x += position[1]
-            mean_y += position[0]
             cv2.circle(contour_image, center, 2, (255, 0, 0), -1)
-        blue_ball = tuple(self.blue_ball_position[0, 0].astype(int).tolist())
-        cv2.circle(contour_image, blue_ball, 4, (0, 0, 255), -1)
-        
-
-        center_of_mass = (int(mean_x / len(positions)), int(mean_y / len(positions)))
-        self.com_velocity = np.array(center_of_mass).reshape(1, 1, 2) - self.com_position
-        self.com_position = np.array(center_of_mass).reshape(1, 1, 2)
-        cv2.circle(contour_image, center_of_mass, 4, (0, 255, 0), -1)
         self.image_queue.put(contour_image)
 
         return positions.reshape(1, -1, 2)
@@ -234,7 +230,7 @@ class BaslerCameraObservable(Observable, ABC):
         Detects peaks in the image using the skimage feature module.
         """
         coordinates = peak_local_max(
-            onp.array(cleaned_image.squeeze()), min_distance=1, threshold_abs=self.threshold, num_peaks=self.number_particles
+            onp.array(cleaned_image.squeeze()), min_distance=4, threshold_abs=self.threshold, num_peaks=self.number_particles
         )
         return coordinates
 

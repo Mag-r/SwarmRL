@@ -82,7 +82,7 @@ class ActorNet(nn.Module):
         )
         self.lstm = self.ScanLSTM(features=64)
         temperature = self.param(
-            "temperature", lambda key, shape: jnp.full(shape, jnp.log(0.01)), (1,)
+            "temperature", lambda key, shape: jnp.full(shape, jnp.log(0.001)), (1,)
         )
 
     @nn.compact
@@ -91,10 +91,12 @@ class ActorNet(nn.Module):
             carry = self.lstm.initialize_carry(
                 jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
             )
+        mean = self.param("mean", nn.initializers.normal(stddev=0.3), (action_dimension,))
+        std = self.param("std", lambda key, shape: jnp.full(shape, -3.0), (action_dimension,))
+        batch_size= x.shape[0]
         nn.BatchNorm(use_running_average=not train)(x)
-        x = self.preprocessor(x, train=train)
-        mean = nn.Dense(features=action_dimension, name="Actor_mean")(x)
-        std = nn.Dense(features=action_dimension, name="Actor_std")(x)
+        mean = jnp.tile(mean, (batch_size, 1))
+        std = jnp.tile(std, (batch_size, 1))
         actor = jnp.concatenate([mean, std], axis=-1)
         return actor, carry
 
@@ -151,7 +153,7 @@ def defineRLAgent(
             optax.clip_by_global_norm(
                 1.0
             ),  # Gradient clipping with a maximum norm of 1.0
-            optax.inject_hyperparams(optax.adam)(learning_rate=lr_schedule),
+            optax.adam(learning_rate=lr_schedule),
         )
 
     shared_encoder = ParticlePreprocessor()
@@ -167,6 +169,7 @@ def defineRLAgent(
         volatility=0.08,
         action_dimension=action_dimension,
         action_limits=action_limits,
+        epsilon=0.0
     )
 
     value_function = srl.value_functions.TDReturnsSAC(gamma=0.99, standardize=False)
@@ -200,8 +203,8 @@ def defineRLAgent(
 
     loss = srl.losses.SoftActorCriticGradientLoss(
         value_function=value_function,
-        minimum_entropy=-action_dimension * 1.2,
-        polyak_averaging_tau=0.02,
+        minimum_entropy=-action_dimension * 5.2,
+        polyak_averaging_tau=0.1,
         lock=lock,
         validation_split=0.1,
         fix_temperature=False,
@@ -215,7 +218,7 @@ def defineRLAgent(
         task=task,
         observable=obs,
         loss=loss,
-        max_samples_in_trajectory=1000,
+        max_samples_in_trajectory=10000,
         lock=lock,
     )
     return protocol

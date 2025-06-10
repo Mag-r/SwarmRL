@@ -1,6 +1,6 @@
 # %%
 import numpy as np 
-import cv2
+import cv2 as cv
 import time
 # import read_position_data
 import matplotlib.pyplot as plt
@@ -12,6 +12,7 @@ import pickle
 from flax.training.train_state import TrainState
 import optax
 from scipy.ndimage import label, find_objects
+from skimage.feature import peak_local_max
 
 
 # %%
@@ -45,7 +46,7 @@ model_state = TrainState.create(
         apply_fn=model.apply, params=params, tx=optax.adam(0.001)
     )
 # Load pretrained model
-with open("autoencoder_model/final_model.pkl", "rb") as f:
+with open("autoencoder_model/autoencoder_hex.pkl", "rb") as f:
     model_params= pickle.load(f)
 
 model_state = model_state.replace(
@@ -54,45 +55,33 @@ model_state = model_state.replace(
 
 # %%
 
-input_data = plt.imread("../images/camera_image_0000.png")
-input_data = cv2.cvtColor(input_data, cv2.COLOR_BGR2GRAY)
+input_data = cv.imread("../images/camera_image_0000.png")
+input_data = cv.resize(input_data, (size, size))
+input_data = cv.cvtColor(input_data, cv.COLOR_RGB2BGR)
+
 print(input_data.shape)
 # input_data = cv2.resize(input_data, (size,size))
 
-mean = np.mean(input_data)
-std = np.std(input_data)
-input_data = (input_data - mean) / std
-input_data = np.expand_dims(input_data, axis=-1)
 fig, ax = plt.subplots(1,3)
 
 ax[0].imshow(input_data)
 
-
-
 start = time.time()
 
-cleaned_image = model.apply(model_state.params, input_data.reshape(1, size, size, 1))
-cleaned_image = cleaned_image > 0.8
-cleaned_image = np.squeeze(cleaned_image)
+cleaned_image = model.apply(model_state.params, input_data.reshape(1, size, size, 3))
 
-ax[1].imshow(cleaned_image[:,:], cmap='gray')
+ax[1].imshow(cleaned_image[0,...], cmap='gray')
 
 cleaned_image = cleaned_image[:,:]
-image = np.array(cleaned_image*255, dtype=np.uint8) 
+image = np.array(cleaned_image, dtype=np.uint8) 
 
-contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-min_area = 0.01
-print([cv2.arcLength(contour, False) for contour in contours])
-contours = [contour for contour in contours if cv2.arcLength(contour, True) > min_area]
-contour_image = cv2.cvtColor(input_data.squeeze(), cv2.COLOR_GRAY2RGB)
-cv2.drawContours(contour_image, contours, -1, (0, 255, 0), 2)
-
-# Calculate and print the positions of the contours
-positions = [cv2.boundingRect(contour) for contour in contours]
-
-for i, pos in enumerate(positions):
-    x, y, w, h = pos
-    print(f"Position: x={x}, y={y}, width={w}, height={h}")
+positions = peak_local_max(
+            np.array(cleaned_image.squeeze()), min_distance=3, threshold_abs=0.6, num_peaks=7
+        )
+contour_image = np.array(input_data, dtype=np.uint8)
+for position in positions:
+    center = tuple([position[1], position[0]])
+    cv.circle(contour_image, center, 2, (255, 0, 0), -1)
 
 print(len(positions))
 
@@ -102,8 +91,3 @@ print(time.time()-start)
 plt.savefig("blob_detection.png")
 plt.show()
 
-
-
-
-
-# %%

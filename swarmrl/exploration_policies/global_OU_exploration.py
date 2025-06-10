@@ -37,7 +37,7 @@ class GlobalOUExploration(ExplorationPolicy, ABC):
         self.action_dimension = action_dimension
         self.noise = np.zeros(action_dimension)
         self.action_limits = action_limits
-        self.epsilon = 1.0
+        self.epsilon = epsilon
 
     def reduce_randomness(self, decay: float = 0.95) -> None:
         self.noise *= decay

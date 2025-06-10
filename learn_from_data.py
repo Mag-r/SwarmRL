@@ -24,10 +24,11 @@ logging.basicConfig(
 )
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-action_dimension = 6
+action_dimension = 4
 action_limits = jnp.array(
-    [[0, 70], [0, 70], [0, 30], [0, 30], [-0.8, 0.8], [-0.5, 0.5]]
+    [[0, 100], [0, 100], [0, 30], [0, 30]]
 )
+
 
 from typing import Any, Tuple
 
@@ -56,7 +57,6 @@ class AttentionBlock(nn.Module):
 
         return y  # Residual
 
-
 class ParticlePreprocessor(nn.Module):
     hidden_dim: int = 12
     num_heads: int = 4
@@ -66,8 +66,7 @@ class ParticlePreprocessor(nn.Module):
     def __call__(self, state: jnp.ndarray, train: bool = False) -> jnp.ndarray:
         b, t, n, d = state.shape
         state = state.reshape(b * t, n, d)
-        pos = state[:, :-2, :]
-        vel = state[:, -2:, :]
+        pos = state[:, :, :]
 
         x = nn.Dense(self.hidden_dim)(pos)
 
@@ -81,22 +80,16 @@ class ParticlePreprocessor(nn.Module):
         x = AttentionBlock(self.hidden_dim, self.num_heads)(x, train)
         x = jnp.mean(x, axis=1)
 
-        v = vel.reshape(b * t, -1)
-        v = nn.Dense(4)(v)
-        v = nn.silu(v)
-
-        return jnp.concatenate([x, v], axis=-1)
-
+        return x
 
 class ActorNet(nn.Module):
-    preprocessor: Any
-    hidden_dim: int = 12
-    num_heads: int = 2
-    dropout_rate: float = 0.1
-    log_std_min: float = -10.0
-    log_std_max: float = 0.5
-
+    """A simple dense model.
+    (batch,time,features)
+    When dense at beginning, probably flatten is required
+    """
+    preprocessor: Any = None  # Placeholder for preprocessor
     def setup(self):
+        # Define a scanned LSTM cell
         self.ScanLSTM = nn.scan(
             nn.OptimizedLSTMCell,
             variable_broadcast="params",
@@ -104,88 +97,61 @@ class ActorNet(nn.Module):
             in_axes=1,
             out_axes=1,
         )
-        self.lstm = self.ScanLSTM(features=2)
-        self.temperature = self.param(
-            "temperature", lambda key, shape: jnp.full(shape, jnp.log(1)), (1,)
+        self.lstm = self.ScanLSTM(features=64)
+        temperature = self.param(
+            "temperature", lambda key, shape: jnp.full(shape, jnp.log(0.01)), (1,)
         )
 
     @nn.compact
-    def __call__(
-        self,
-        state: jnp.ndarray,
-        previous_actions: jnp.ndarray,
-        carry: Any = None,
-        train: bool = False,
-    ) -> Tuple[jnp.ndarray, Any]:
+    def __call__(self, x, previous_actions, carry=None, train:bool = False):
         if carry is None:
             carry = self.lstm.initialize_carry(
-                jax.random.PRNGKey(0), state.shape[:1] + state.shape[2:]
+                jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
             )
-        x = self.preprocessor(state, train=train)
-        x = nn.LayerNorm()(x)
-        x = nn.Dense(self.hidden_dim)(x)
-        x = nn.silu(x)
-        for i in range(4):
-            y = nn.LayerNorm()(x)
-            y = nn.Dense(self.hidden_dim)(y)
-            y = nn.silu(y)
-
-        mu = nn.Dense(action_dimension)(x)
-        mu = jnp.tanh(mu) * 3.0
-
-        log_std = nn.Dense(action_dimension)(x)
-        log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
-        o = nn.BatchNorm(use_running_average=not train)(mu)
-        return jnp.concatenate([mu, log_std], axis=-1), carry
+        mean = self.param("mean", nn.initializers.zeros, (action_dimension,))
+        std = self.param("std", lambda key, shape: jnp.full(shape, -1.0), (action_dimension,))
+        batch_size= x.shape[0]
+        nn.BatchNorm(use_running_average=not train)(x)
+        mean = jnp.tile(mean, (batch_size, 1))
+        std = jnp.tile(std, (batch_size, 1))
+        actor = jnp.concatenate([mean, std], axis=-1)
+        return actor, carry
 
 
 class CriticNet(nn.Module):
-    preprocessor: Any
-    hidden_dim: int = 12
-    dropout_rate: float = 0.1
+    preprocessor: Any  # ParticlePreprocessor
+    def setup(self):
+        # Define a scanned LSTM cell
+        self.ScanLSTM = nn.scan(
+            nn.OptimizedLSTMCell,
+            variable_broadcast="params",
+            split_rngs={"params": False},
+            in_axes=1,
+            out_axes=1,
+        )
+        self.lstm = self.ScanLSTM(features=64)
 
     @nn.compact
-    def __call__(
-        self,
-        state: jnp.ndarray,
-        previous_actions: jnp.ndarray,
-        action: jnp.ndarray,
-        carry: Any = None,
-        train: bool = False,
-    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        x = self.preprocessor(state, train=train)
-
-        a_norm = (action - action_limits[:, 0]) / (
-            action_limits[:, 1] - action_limits[:, 0]
-        )
-        a_norm = nn.Dense(self.hidden_dim)(a_norm)
-        sa = jnp.concatenate([x, a_norm], axis=-1)
-        sa = nn.Dense(self.hidden_dim)(sa)
-        sa = nn.silu(sa)
-
-        def q_net(name: str):
-            y = sa
-            for i in range(4):
-                z = nn.LayerNorm()(y)
-                z = nn.Dense(self.hidden_dim, name=f"{name}_fc{i}")(z)
-                z = nn.silu(z)
-                z = nn.Dropout(self.dropout_rate)(z, deterministic=not train)
-            q = nn.Dense(1, name=f"{name}_out")(y)
-            return q
-
-        q1 = q_net("q1")
-        q2 = q_net("q2")
-        y = nn.BatchNorm(use_running_average=not train)(sa)
-        return q1, q2
-
-
+    def __call__(self, x, previous_actions, action, carry=None, train:bool = False):
+        batch_size, sequence_length = x.shape[0], x.shape[1]
+        x = self.preprocessor(x, train=train)
+        x = jnp.concatenate([x, action], axis=-1)
+        q_1 = nn.Dense(features=12, name="Critic_1")(x)
+        q_2 = nn.Dense(features=12, name="Critic_2")(x)
+        q_1 = nn.sigmoid(q_1)
+        q_2 = nn.sigmoid(q_2)
+        q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
+        q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
+        q_1 = nn.Dense(features=1)(x)
+        q_2 = nn.Dense(features=1)(x)
+        return q_1, q_2
 sequence_length = 1
 resolution = 253
-number_particles = 30
-learning_rate = 3e-6
+number_particles = 7
+learning_rate = 3e-5
 
 obs = srl.observables.Observable(0)
-task = srl.tasks.BallRacingTask()
+task = srl.tasks.ExperimentHexagonTask(number_particles=number_particles)
 
 
 lr_schedule = optax.exponential_decay(
@@ -194,16 +160,15 @@ lr_schedule = optax.exponential_decay(
     decay_rate=0.99,
     staircase=True,
 )
-optimizer = optax.inject_hyperparams(optax.adam)(learning_rate=lr_schedule)
-
+optimizer = optax.chain(
+    optax.clip_by_global_norm(
+        1.0
+    ),  # Gradient clipping with a maximum norm of 1.0
+    optax.adam(learning_rate=lr_schedule),
+)
 shared_encoder = ParticlePreprocessor()
 actor = ActorNet(preprocessor=shared_encoder)
 critic = CriticNet(preprocessor=shared_encoder)
-
-action_limits = jnp.array(
-    [[0, 70], [0, 70], [0, 50], [0, 50], [-0.8, 0.8], [-0.5, 0.5]]
-)
-
 
 # Define a sampling_strategy
 sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(
@@ -215,6 +180,7 @@ exploration_policy = srl.exploration_policies.GlobalOUExploration(
     volatility=0.3,
     action_limits=action_limits,
     action_dimension=action_dimension,
+    epsilon=0.0
 )
 value_function = srl.value_functions.TDReturnsSAC(gamma=0.99, standardize=False)
 actor_network = srl.networks.ContinuousActionModel(
@@ -268,7 +234,7 @@ engine = OfflineLearning()
 
 protocol.restore_agent(identifier=task.__class__.__name__)
 protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_1")
-protocol.actor_network.set_temperature(1e-3)
+# protocol.actor_network.set_temperature(1e-3)
 
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)

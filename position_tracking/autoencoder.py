@@ -23,25 +23,25 @@ def load_and_split_data(scale, start_index=0, batch_size=200):
     input_data = np.load("detected_images.npy")[start_index:start_index+batch_size,::scale,::scale]
     ground_truth_positions = np.load("detected_centers.npy")[start_index:start_index+batch_size]
 
-    validation_input_data = input_data[-10:]
-    validation_ground_truth_positions = ground_truth_positions[-10:]
-    input_data = input_data[:-10]
-    ground_truth_positions = ground_truth_positions[:-10]
+    validation_input_data = input_data[-1:]
+    validation_ground_truth_positions = ground_truth_positions[-1:]
+    input_data = input_data[:-1]
+    ground_truth_positions = ground_truth_positions[:-1]
 
-    def positions_to_binary_image(positions, img_size=(int(506/scale), int(506/scale)), radius=1):
+    def positions_to_binary_image(positions, img_size=(int(253/scale), int(253/scale)), radius=1):
         images = np.zeros((len(positions), *img_size, 1), dtype=np.float32)
         for i, pos_list in enumerate(positions):
             for x, y in pos_list:  # Assuming each entry is a list of (x, y) tuples
-                cv2.circle(images[i, :, :, 0], (int(x / scale), int(y / scale)), radius, 1.0, -1)
+                cv2.circle(images[i, :, :, 0], (int(x/scale), int(y/scale)), radius, 1.0, -1)
         return images
 
 
 # Convert ground truth positions to binary target images
     ground_truth_images = positions_to_binary_image(ground_truth_positions)
     validation_ground_truth_images = positions_to_binary_image(
-    validation_ground_truth_positions
-)
-    
+        validation_ground_truth_positions
+    )
+    # print(f"shape of input data: {input_data.shape}, ground truth images: {ground_truth_images.shape}")
     return input_data,validation_input_data,ground_truth_images,validation_ground_truth_images
 
 
@@ -99,7 +99,7 @@ def create_train_state(rng, model):
     params = model.init(rng, dummy_input)
     model_summary = model.tabulate(rng, dummy_input)
     print(model_summary)
-    lr_schedule = optax .schedules.exponential_decay(1e-3, 100, 0.9)
+    lr_schedule = optax .schedules.exponential_decay(1e-5, 100, 0.9)
     optimizer = optax.inject_hyperparams(optax.adam)(learning_rate=lr_schedule)
     return train_state.TrainState.create(
         apply_fn=model.apply, params=params, tx=optimizer
@@ -128,14 +128,14 @@ def load_model(path):
         logger.info(f"Loading model from {path}")
         return pickle.load(f)
 
-loaded_params = load_model("autoencoder_model/model_260.pkl")
+loaded_params = load_model("autoencoder_model/autoencoder_hex.pkl")
 state = state.replace(params=loaded_params)
 training_losses = []
 validation_losses = []
 try:
     for epoch in range(10000):
         losses = 0
-        for start_idx in range(0, 4424, batch_size):
+        for start_idx in range(0, 13, batch_size):
             batch,_,target,_ = load_and_split_data(scale, start_index=start_idx, batch_size=batch_size)
             for _ in range(1):  # Perform 5 training steps per batch
                 state, loss = train_step(state, batch, target, weight)
@@ -161,7 +161,8 @@ try:
         if epoch % 10 == 0:
             logger.info(f"Validation Loss: {validation_loss:.6f}")
             example_output = state.apply_fn(state.params, example_image[None, ...])
-            print(np.max(example_output))
+            if np.max(example_output) < 0.1:
+                raise ValueError("Model is not learning, output is too low.")
             fig, ax = plt.subplots(1, 3)
             ax[0].imshow((example_image-np.min(example_image)) / (np.max(example_image)-np.min(example_image)))
             ax[1].imshow(validation_ground_truth_images[0, :, :, 0], cmap="hot")

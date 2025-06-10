@@ -26,6 +26,7 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
         """
         self.action_dimension = action_dimension
         self.action_limits = action_limits
+        self.LOG_TWO_PI = jnp.log(2 * jnp.pi)
         # if self.action_limits:
         #     assert jnp.shape(self.action_limits) == (self.action_dimension, 2), f"Action limits must have shape ({self.action_dimension}, 2). Has shape {jnp.shape(self.action_limits)}"
 
@@ -82,17 +83,11 @@ class ContinuousGaussianDistribution(SamplingStrategy, ABC):
             pre_squash_action = jax.random.normal(subkey, shape=mean.shape) * std + mean
 
             if calculate_log_probs:
-                log_probs = -0.5 * (((pre_squash_action - mean) / std) ** 2 + 2 * jnp.log(std) + jnp.log(2 * jnp.pi))
+                log_probs = -0.5 * (((pre_squash_action - mean) / std) ** 2 + 2 * jnp.log(std) + self.LOG_TWO_PI)
                 log_probs = log_probs.sum(axis=-1)
 
                 correction = (2*(jnp.log(2)-pre_squash_action-jax.nn.softplus(-2*pre_squash_action))).sum(axis=-1)
                 log_probs = log_probs - correction
-                low  = self.action_limits[:, 0]  # (action_dim,)
-                high = self.action_limits[:, 1]  # (action_dim,)
-                scale = (high - low) / 2         # (action_dim,)
-                log_scale_sum = jnp.sum(jnp.log(scale))  # Skalar
-
-                log_probs = log_probs - log_scale_sum
             else:
                 log_probs = None
         action = (

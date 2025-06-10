@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as onp
 from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict
+import flax
 from optax._src.base import GradientTransformation
 
 from swarmrl.networks.custom_train_state import CustomTrainState
@@ -391,7 +392,7 @@ class ContinuousActionModel(Network, ABC):
 
         self.model_state = self.model_state.replace(
             params=model_params,
-            # opt_state=opt_state,
+            opt_state=opt_state,
             step=opt_step,
             batch_stats=batch_stats,
         )
@@ -401,36 +402,43 @@ class ContinuousActionModel(Network, ABC):
         # self.carry = carry
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
 
-    def load_particle_preprocessor_params(self, filename: str, directory: str = "Models"):
+
+    def restore_preprocessor_state(self,
+                                filename: str = "model",
+                                directory: str = "Models"):
         """
-        Load only the parameters of the ParticlePreprocessor from a saved model.
+        Restore only the preprocessor’s parameters (and batch_stats) from a checkpoint.
 
         Parameters
         ----------
         filename : str
-            Name of the model state file.
+            Name of the pickle file (without .pkl)
         directory : str
-            Path to the model state file.
-
-        Updates
-        -------
-        Updates the ParticlePreprocessor parameters in the current model.
+            Directory where the file lives.
         """
-        # Load the saved model state
-        with open(os.path.join(directory, filename + ".pkl"), "rb") as f:
-            model_params, _, _, _, _, _ = pickle.load(f)
+        with open(f"{directory}/{filename}.pkl", "rb") as f:
+            model_params, opt_state, opt_step, epoch, carry, batch_stats = pickle.load(f)
 
-        # Extract ParticlePreprocessor parameters
-        particle_preprocessor_params = {
-            k: v for k, v in model_params.items() if "ParticlePreprocessor" in k
-        }
+        pre_params = model_params["preprocessor"]
+        pre_batch_stats = batch_stats.get("preprocessor", None)
 
-        # Update the current model's ParticlePreprocessor parameters
-        current_params = self.model_state.params
-        updated_params = {**current_params, **particle_preprocessor_params}
-        self.model_state = self.model_state.replace(params=updated_params)
+        ms = flax.core.unfreeze(self.model_state)
 
-        logger.info("ParticlePreprocessor parameters successfully loaded.")
+        ms["params"]["preprocessor"] = pre_params
+
+        if pre_batch_stats is not None:
+            ms["batch_stats"]["preprocessor"] = pre_batch_stats
+
+
+        self.model_state = self.model_state.replace(
+            params=flax.core.freeze(ms["params"]),
+            batch_stats=flax.core.freeze(ms["batch_stats"]),
+            # step=self.model_state.step, 
+            opt_state=self.model_state.opt_state, 
+        )
+
+        logger.info("Preprocessor parameters restored.")
+
 
     def get_exp_temperature(self) -> float:
         """
