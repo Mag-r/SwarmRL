@@ -148,7 +148,7 @@ class CriticNet(nn.Module):
 sequence_length = 1
 resolution = 253
 number_particles = 7
-learning_rate = 3e-5
+learning_rate = 5e-4
 
 obs = srl.observables.Observable(0)
 task = srl.tasks.ExperimentHexagonTask(number_particles=number_particles)
@@ -189,7 +189,7 @@ actor_network = srl.networks.ContinuousActionModel(
     input_shape=(
         1,
         sequence_length,
-        number_particles + 4,
+        number_particles,
         2,
     ),  # batch implicitly 1 ,time,H,W,channels for conv
     sampling_strategy=sampling_strategy,
@@ -203,7 +203,7 @@ critic_network = srl.networks.ContinuousCriticModel(
     input_shape=(
         1,
         sequence_length,
-        number_particles + 4,
+        number_particles,
         2,
     ),  # batch implicitly 1 ,time,H,W,channels for conv
     action_dimension=action_dimension,
@@ -232,10 +232,10 @@ protocol = srl.agents.MPIActorCriticAgent(
 engine = OfflineLearning()
 
 
-protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_1")
+# protocol.restore_agent(identifier=task.__class__.__name__)
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_7")
 # protocol.actor_network.set_temperature(1e-3)
-
+# protocol.set_optimizer(optimizer)
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(engine, 10000, 10)

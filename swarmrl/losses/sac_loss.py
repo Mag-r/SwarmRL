@@ -207,7 +207,7 @@ class SoftActorCriticGradientLoss(Loss):
             actor_params, log_probs, minimum_entropy=minimum_entropy
         )
 
-        total_loss = critic_loss + actor_loss + temperature_loss
+        total_loss = critic_loss + 3 * actor_loss + temperature_loss
 
         aux = {
             "critic_loss": critic_loss,

@@ -469,3 +469,15 @@ class MPIActorCriticAgent(Agent):
             )
 
         return state_description, latest_observable
+    
+    def set_optimizer(self, optimizer):
+        """
+        Set the optimizer for the actor and critic networks.
+
+        Parameters
+        ----------
+        optimizer : jax.experimental.optimizers.Optimizer
+                Optimizer to use for the networks.
+        """
+        self.actor_network.set_optimizer(optimizer)
+        self.critic_network.set_optimizer(optimizer)

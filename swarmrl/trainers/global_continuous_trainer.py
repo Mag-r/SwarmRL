@@ -36,6 +36,7 @@ class GlobalContinuousTrainer(Trainer):
         deployment_mode: bool = False,
     ):
         super().__init__(agents)
+        self.learning_thread = threading.Thread(target=self.async_update_rl)
         self.interaction_model_queue = queue.LifoQueue()
         self.lock = lock
         self.sampling_finished = False
@@ -45,6 +46,12 @@ class GlobalContinuousTrainer(Trainer):
         return GlobalForceFunction(
             agents=self.agents,
         )
+
+    def async_update_rl(self):
+        killed = False
+        while not killed and not self.sampling_finished:
+            force_fn, current_reward, killed = self.update_rl()
+            self.interaction_model_queue.put((force_fn, current_reward, killed))
 
     def update_rl(self) -> Tuple[GlobalForceFunction, np.ndarray]:
         """
@@ -136,63 +143,74 @@ class GlobalContinuousTrainer(Trainer):
                     with self.lock:
                         for agent in self.agents.values():
                             agent.remove_old_data()
-                    force_fn, current_reward, killed = self.update_rl()
-                    rewards.append(current_reward)
-                    if killed:
-                        print(
-                            "Simulation has been ended by the task, ending training."
+                    if episode == 0 and not self.deployment_mode:
+                        self.learning_thread.start()
+                    if not self.interaction_model_queue.empty():
+                        force_fn, current_reward, killed = (
+                            self.interaction_model_queue.get()
                         )
-                        self.engine.finalize()
-                        break
+                        with self.lock:  # clear the queue, to not use old models
+                            while not self.interaction_model_queue.empty():
+                                self.interaction_model_queue.get()
+                        logger.info(f"obtained new interaction model")
 
-                    rewards.append(current_reward)
-                    logger.info(
-                        f"Episode {episode}; mean immediate reward: {current_reward}"
-                    )
-                    # Perform linear regression on rewards using scipy
-                    if len(rewards) > 1:
-                        x = np.arange(len(rewards))
-                        y = np.array(rewards)
-                        slope, _, _, _, _ = linregress(x, y)
-                        linear_regression = np.round(slope, 4)
-
-                    progress.update(task, linear_regression=linear_regression)
-                    progress.update(
-                        task,
-                        advance=1,
-                        Episode=episode,
-                        current_reward=np.round(current_reward, 2),
-                        running_reward=np.round(np.mean(rewards[-10:]), 2),
-                        total_reward=np.round(np.mean(rewards), 2),
-                        linear_regression=linear_regression,
-                    )
-                    if np.round(current_reward, 2) > 0.9:
-                        for agent in self.agents.values():
-                            agent.save_agent(
-                                identifier=f"hexagon_experiment_successful_{number_successful_episodes + 1}"
+                        if killed:
+                            print(
+                                "Simulation has been ended by the task, ending training."
                             )
-                            agent.initialize_network()
-                        number_successful_episodes += 1
+                            self.engine.finalize()
+                            break
+
+                        rewards.append(current_reward)
+                        logger.info(
+                            f"Episode {episode}; mean immediate reward: {current_reward}"
+                        )
+                        # Perform linear regression on rewards using scipy
+                        if len(rewards) > 1:
+                            x = np.arange(len(rewards))
+                            y = np.array(rewards)
+                            slope, _, _, _, _ = linregress(x, y)
+                            linear_regression = np.round(slope, 4)
+
+                        progress.update(task, linear_regression=linear_regression)
+                        progress.update(
+                            task,
+                            advance=1,
+                            Episode=episode,
+                            current_reward=np.round(current_reward, 2),
+                            running_reward=np.round(np.mean(rewards[-10:]), 2),
+                            total_reward=np.round(np.mean(rewards), 2),
+                            linear_regression=linear_regression,
+                        )
                         
+                    else:
+                        logger.info("Sampling is faster than learning.")
+
+                        if not self.learning_thread.is_alive() and not self.deployment_mode:
+                            logger.warning("Learning thread has stopped unexpectedly. Try restarting the training.")
+                            self.learning_thread = threading.Thread(target=self.async_update_rl)
+                            self.learning_thread.start()
 
 
                     if episode % 10 == 0 and episode > 0:
-                        # Save the agents every 10 episodes.
-                        logger.info(
-                            "Trying to seperate the rafts and save the agents."
-                        )
-                        self.engine.seperate_rafts()
-                        
-                        with self.lock:
-                            for agent in self.agents.values():
-                                agent.actor_network.exploration_policy.reduce_randomness()
-                                agent.save_trajectory(
-                                    identifier=f"{agent.task.__class__.__name__}_episode_{int(episode/10.0)}"
-                                )
-                                agent.save_agent(
-                                    identifier=agent.task.__class__.__name__
-                                )
+                            # Save the agents every 10 episodes.
+                            logger.info(
+                                "Trying to seperate the rafts and save the agents."
+                            )
+                            self.engine.seperate_rafts()
+                            
+                            with self.lock:
+                                for agent in self.agents.values():
+                                    agent.actor_network.exploration_policy.reduce_randomness()
+                                    agent.save_trajectory(
+                                        identifier=f"{agent.task.__class__.__name__}_episode_{int(episode/10.0)}"
+                                    )
+                                    agent.save_agent(
+                                        identifier=agent.task.__class__.__name__
+                                    )
             finally:
                 self.engine.finalize()
+                self.sampling_finished = True
+                self.learning_thread.join(100.0)
 
         return np.array(rewards)

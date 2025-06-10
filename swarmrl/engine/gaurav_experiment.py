@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6342
+    labview_port = 6340
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  

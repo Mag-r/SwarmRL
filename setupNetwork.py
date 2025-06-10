@@ -80,7 +80,7 @@ class ActorNet(nn.Module):
             in_axes=1,
             out_axes=1,
         )
-        self.lstm = self.ScanLSTM(features=64)
+        self.lstm = self.ScanLSTM(features=2)
         temperature = self.param(
             "temperature", lambda key, shape: jnp.full(shape, jnp.log(0.001)), (1,)
         )
@@ -92,7 +92,7 @@ class ActorNet(nn.Module):
                 jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
             )
         mean = self.param("mean", nn.initializers.normal(stddev=0.3), (action_dimension,))
-        std = self.param("std", lambda key, shape: jnp.full(shape, -3.0), (action_dimension,))
+        std = self.param("std", lambda key, shape: jnp.full(shape, -1.5), (action_dimension,))
         batch_size= x.shape[0]
         nn.BatchNorm(use_running_average=not train)(x)
         mean = jnp.tile(mean, (batch_size, 1))
@@ -157,8 +157,8 @@ def defineRLAgent(
         )
 
     shared_encoder = ParticlePreprocessor()
-    actor = ActorNet(preprocessor=shared_encoder)
-    critic = CriticNet(preprocessor=shared_encoder)
+    actor = ActorNet(preprocessor=ParticlePreprocessor())
+    critic = CriticNet(preprocessor=ParticlePreprocessor())
 
     # Define a sampling_strategy
     sampling_strategy = srl.sampling_strategies.ContinuousGaussianDistribution(
@@ -221,4 +221,4 @@ def defineRLAgent(
         max_samples_in_trajectory=10000,
         lock=lock,
     )
-    return protocol
+    return protocol, optimizer

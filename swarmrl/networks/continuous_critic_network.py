@@ -216,6 +216,21 @@ class ContinuousCriticModel(Network, ABC):
         logger.debug(f"{self.critic_state=}")
         logger.debug("Model updated")
         self.epoch_count += 1
+        
+    def set_optimizer(self, optimizer: GradientTransformation):
+        """
+        Set the optimizer for the model.
+
+        Parameters
+        ----------
+        optimizer : GradientTransformation
+                Optimizer to use in the training.
+        """
+        if isinstance(optimizer, dict):
+            raise NotImplementedError
+        else:
+            self.optimizer = optimizer
+            self.critic_state = self.critic_state.replace(tx=optimizer, step=0)
 
     def compute_q_values_critic(
         self,

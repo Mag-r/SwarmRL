@@ -196,16 +196,7 @@ class ContinuousActionModel(Network, ABC):
         # Logging for grads and pre-train model state
         logger.debug(f"{grads=}")
         logger.debug(f"{self.model_state=}")
-
-        # Validate gradients
-        def validate_grad(grad):
-            if grad is None or not isinstance(grad, jnp.ndarray):
-                logger.error(f"Invalid gradient detected: {grad}")
-                return jnp.zeros_like(grad) if grad is not None else grad
-            return grad
-
-        grads = jax.tree_util.tree_map(validate_grad, grads)
-
+        
         if isinstance(self.optimizer, dict):
             raise NotImplementedError
         else:
@@ -401,6 +392,22 @@ class ContinuousActionModel(Network, ABC):
         self.epoch_count = epoch
         # self.carry = carry
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
+    
+    def set_optimizer(self, optimizer: GradientTransformation):
+        """
+        Set the optimizer for the model.
+
+        Parameters
+        ----------
+        optimizer : GradientTransformation
+            The optimizer to set for the model.
+        """
+        if isinstance(self.optimizer, dict):
+            raise NotImplementedError
+        else:
+            self.model_state = self.model_state.replace(tx=optimizer, step=0)
+            self.optimizer = optimizer
+            logger.info("Optimizer set.")
 
 
     def restore_preprocessor_state(self,
