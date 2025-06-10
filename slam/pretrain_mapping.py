@@ -269,12 +269,8 @@ class SmallAttentionUNet(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        # x: (B,64,64,1)
-        steps = jnp.sum(x, axis=(1, 2, 3))  # Summe über alle Zellen
-        steps = jnp.ones_like(x) * steps[:, None, None, None]  # Broadcast auf (B,64,64,1)
-        x = (x- jnp.min(x)) / (jnp.max(x) - jnp.min(x) + 1e-6)  # Normalisiere Input
-        x = jnp.concatenate([x, steps], axis=-1)  # (B,64,64,2)
         # --- Encoder ---
+        x = jnp.clip(x, 0, 1000.0)/1000.0  # Sicherstellen, dass Input in [0,1] ist
         # Block 1: 1→16, Downsample auf (32×32)
         e1 = nn.Conv(features=8, kernel_size=(3, 3), strides=(2, 2), padding="SAME", name="enc_conv_0")(
             x
@@ -367,7 +363,7 @@ def edge_pad(x, kernel_size):
 class OccupancyMapper(nn.Module):
     @nn.compact
     def __call__(self, x):
-        x = (x-np.min(x)) / (np.max(x) - np.min(x) + 1e-6)  # Normalisiere Input
+        x = jnp.clip(x, 0, 1000.0)/1000.0  # Sicherstellen, dass Input in [0,1] ist
         x = edge_pad(x, (3, 3))
         x = nn.Conv(16, (3, 3), padding="VALID")(x)
         x = nn.silu(x)
@@ -377,17 +373,16 @@ class OccupancyMapper(nn.Module):
         x = nn.silu(x)
 
         x = edge_pad(x, (3, 3))
-        x = nn.ConvTranspose(32, (3, 3), padding="VALID")(x)
+        x = nn.Conv(32, (3, 3), padding="VALID")(x)
         x = nn.silu(x)
 
         x = edge_pad(x, (3, 3))
-        x = nn.ConvTranspose(16, (3, 3), padding="VALID")(x)
+        x = nn.Conv(16, (3, 3), padding="VALID")(x)
         x = nn.silu(x)
 
         x = edge_pad(x, (3, 3))
-        x = nn.ConvTranspose(1, (3, 3), padding="VALID")(x)
+        x = nn.Conv(1, (3, 3), padding="VALID")(x)
         x = nn.sigmoid(x)
-
         return x
 
 def dice_loss(pred: jnp.ndarray, true: jnp.ndarray, eps: float = 1e-6) -> jnp.ndarray:
@@ -460,19 +455,19 @@ def load_train_state(path):
     return params, opt_state
 
 # Initialize the model and optimizer
-model = SmallAttentionUNet()
+model = OccupancyMapper()
 model_summary = model.tabulate(
     jax.random.PRNGKey(0), jnp.ones(list([1, n_cells, n_cells, 1]))
 )
 print(model_summary)
 params = model.init(jax.random.PRNGKey(0), jnp.ones(list([1, n_cells, n_cells, 1])))
 lr_schedule = optax.exponential_decay(
-    init_value=1e-3, transition_steps=100, decay_rate=0.95, staircase=True
+    init_value=3e-3, transition_steps=300, decay_rate=0.95, staircase=True
 )
 optimizer = optax.adam(learning_rate=lr_schedule)
 state = TrainState.create(apply_fn=model.apply, params=params["params"], tx=optimizer)
 params, opt_state= load_train_state("occupancy_model_checkpoint")  # Load the model if it exists
-# state = state.replace(params=params, opt_state=opt_state)
+state = state.replace(params=params, opt_state=opt_state)
 
 losses = np.array([])
 losses_circles = np.array([])
