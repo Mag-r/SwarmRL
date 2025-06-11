@@ -124,7 +124,6 @@ class ContinuousCriticModel(Network, ABC):
             train=False,
         )
         params = variables["params"]
-        batch_stats = variables["batch_stats"]
         model_summary = self.critic_network.tabulate(
             jax.random.PRNGKey(1),
             np.ones(list(self.input_shape)),
@@ -139,17 +138,11 @@ class ContinuousCriticModel(Network, ABC):
 
         if isinstance(self.optimizer, dict):
             raise NotImplementedError
-            # CustomTrainState = self._create_custom_train_state(self.optimizer)
-
-            # critic_state = CustomTrainState.create(
-            #     apply_fn=self.critic_network.apply, params=params, tx=self.optimizer
-            # )
         else:
             critic_state = CustomTrainState.create(
-                apply_fn=self.critic_network.apply,
+                apply_fn=jax.jit(self.critic_network.apply, static_argnames=["train"]),
                 params=params,
                 tx=self.optimizer,
-                batch_stats=batch_stats,
             )
         variables = self.target_network.init(
             init_rng,
@@ -162,19 +155,13 @@ class ContinuousCriticModel(Network, ABC):
             train=False,
         )
         params = variables["params"]
-        batch_stats = variables["batch_stats"]
         if isinstance(self.optimizer, dict):
             raise NotImplementedError
-            # CustomTrainState = self._create_custom_train_state(self.optimizer)
-            # target_state = CustomTrainState.create(
-            #     apply_fn=self.target_network.apply, params=params, tx=self.optimizer
-            # )
         else:
             target_state = CustomTrainState.create(
-                apply_fn=self.target_network.apply,
+                apply_fn=jax.jit(self.target_network.apply, static_argnames=["train"]),
                 params=params,
                 tx=self.optimizer,
-                batch_stats=batch_stats,
             )
         return critic_state, target_state
 
@@ -191,7 +178,7 @@ class ContinuousCriticModel(Network, ABC):
         """Split the rng key for dropout."""
         self.dropout_key, _ = jax.random.split(self.dropout_key)
 
-    def update_model(self, grads, updated_batch_stats):
+    def update_model(self, grads):
         """
         Train the model.
 
@@ -204,10 +191,8 @@ class ContinuousCriticModel(Network, ABC):
         else:
             self.critic_state = self.critic_state.apply_gradients(grads=grads)
             self.critic_state = self.critic_state.replace(
-                batch_stats=updated_batch_stats["batch_stats"]
             )
             self.target_state = self.target_state.replace(
-                batch_stats=updated_batch_stats["batch_stats"]
             )
         # Logging for post-train model state
         logger.debug(f"{self.critic_state=}")
@@ -233,42 +218,23 @@ class ContinuousCriticModel(Network, ABC):
             carry (np.ndarray): carry for the LSTM cell.
 
         Returns:
-            tuple: Q_1 and Q_2 values, and batch stats updates.
+            tuple: Q_1 and Q_2 values
         """
         dropout_subkey = jax.random.fold_in(self.dropout_key, self.iteration_count)
         self.iteration_count += 1
-        try:
-            (first_q_values, second_q_values), batch_stats_updates = (
-                self.critic_state.apply_fn(
-                    {"params": params, "batch_stats": self.critic_state.batch_stats},
-                    np.array(observables),
-                    np.array(occupancy_map),
-                    np.array(previous_actions),
-                    np.array(actions),
-                    carry,
-                    train=not self.deployment_mode,
-                    mutable=["batch_stats"],
-                    rngs={"dropout": dropout_subkey},
-                )
+        (first_q_values, second_q_values) = (
+            self.critic_state.apply_fn(
+                {"params": params},
+                np.array(observables),
+                np.array(occupancy_map),
+                np.array(previous_actions),
+                np.array(actions),
+                carry,
+                train=not self.deployment_mode,
+                rngs={"dropout": dropout_subkey},
             )
-        except AttributeError:
-            (first_q_values, second_q_values), batch_stats_updates = (
-                self.critic_state.apply_fn(
-                    {
-                        "params": self.critic_state["params"],
-                        "batch_stats": self.critic_state["batch_stats"],
-                    },
-                    np.array(observables),
-                    np.array(occupancy_map),
-                    np.array(previous_actions),
-                    np.array(actions),
-                    carry,
-                    train=not self.deployment_mode,
-                    mutable=["batch_stats"],
-                    rngs={"dropout": dropout_subkey},
-                )
-            )
-        return first_q_values, second_q_values, batch_stats_updates
+        )
+        return first_q_values, second_q_values
 
     def compute_q_values_target(
         self,
@@ -281,11 +247,10 @@ class ContinuousCriticModel(Network, ABC):
         dropout_subkey = jax.random.fold_in(self.dropout_key, self.iteration_count)
         self.iteration_count += 1
         try:
-            (first_q_values, second_q_values), batch_stats_update = (
+            (first_q_values, second_q_values)= (
                 self.target_state.apply_fn(
                     {
                         "params": self.target_state.params,
-                        "batch_stats": self.target_state.batch_stats,
                     },
                     np.array(observables),
                     np.array(occupancy_map),
@@ -293,16 +258,14 @@ class ContinuousCriticModel(Network, ABC):
                     np.array(actions),
                     carry,
                     train=not self.deployment_mode,
-                    mutable=["batch_stats"],
                     rngs={"dropout": dropout_subkey},
                 )
             )
         except AttributeError:
-            (first_q_values, second_q_values), batch_stats_update = (
+            (first_q_values, second_q_values)= (
                 self.target_state.apply_fn(
                     {
                         "params": self.target_state["params"],
-                        "batch_stats": self.target_state["batch_stats"],
                     },
                     np.array(observables),
                     np.array(occupancy_map),
@@ -310,14 +273,11 @@ class ContinuousCriticModel(Network, ABC):
                     np.array(actions),
                     carry,
                     train=not self.deployment_mode,
-                    mutable=["batch_stats"],
                     rngs={"dropout": dropout_subkey},
                 )
             )
-        # self.target_state = self.target_state.replace(
-        #     batch_stats=batch_stats_update["batch_stats"],
-        # )
-        return first_q_values, second_q_values, batch_stats_update
+
+        return first_q_values, second_q_values
 
     def export_model(self, filename: str = "model", directory: str = "Models"):
         """
@@ -340,8 +300,6 @@ class ContinuousCriticModel(Network, ABC):
         opt_step_target = self.target_state.step
         model_params_critic = self.critic_state.params
         model_params_target = self.target_state.params
-        batch_stats_critic = self.critic_state.batch_stats
-        batch_stats_target = self.target_state.batch_stats
         opt_state_critic = self.critic_state.opt_state
         opt_state_target = self.target_state.opt_state
         opt_step_critic = self.critic_state.step
@@ -360,8 +318,6 @@ class ContinuousCriticModel(Network, ABC):
                     opt_step_critic,
                     opt_step_target,
                     epoch,
-                    batch_stats_critic,
-                    batch_stats_target,
                 ),
                 f,
             )
@@ -391,21 +347,17 @@ class ContinuousCriticModel(Network, ABC):
                 opt_step_critic,
                 opt_step_target,
                 epoch,
-                batch_stats_critic,
-                batch_stats_target,
             ) = pickle.load(f)
 
         self.critic_state = self.critic_state.replace(
             params=model_params_critics,
             opt_state=opt_state_critic,
             step=opt_step_critic,
-            batch_stats=batch_stats_critic,
         )
         self.target_state = self.target_state.replace(
             params=model_params_target,
             opt_state=opt_state_target,
             step=opt_step_target,
-            batch_stats=batch_stats_target,
         )
 
         self.epoch_count = epoch
@@ -428,42 +380,41 @@ class ContinuousCriticModel(Network, ABC):
             self.target_state = self.target_state.replace(tx=optimizer)
             logger.info("Optimizer successfully set.")
 
-    def load_particle_preprocessor_params(
-        self, filename: str, directory: str = "Models"
-    ):
+    def restore_preprocessor_state(self,
+                                filename: str = "model",
+                                directory: str = "Models"):
         """
-        Load only the parameters of the ParticlePreprocessor from a saved model.
+        Restore only the preprocessor’s parametersfrom a checkpoint.
 
         Parameters
         ----------
         filename : str
-            Name of the model state file.
+            Name of the pickle file (without .pkl)
         directory : str
-            Path to the model state file.
-
-        Updates
-        -------
-        Updates the ParticlePreprocessor parameters in the current model.
+            Directory where the file lives.
         """
-        # Load the saved model state
-        with open(os.path.join(directory, filename + ".pkl"), "rb") as f:
-            model_params, _, _, _, _, _ = pickle.load(f)
+        with open(f"{directory}/{filename}.pkl", "rb") as f:
+            model_params, opt_state, opt_step, epoch, carry= pickle.load(f)
 
-        # Extract ParticlePreprocessor parameters
-        particle_preprocessor_params = {
-            k: v for k, v in model_params.items() if "ParticlePreprocessor" in k
-        }
+        pre_params = model_params["preprocessor"]
 
-        # Update the current model's ParticlePreprocessor parameters
-        current_params = self.critic_state.params
-        updated_params = {**current_params, **particle_preprocessor_params}
-        self.criitc_state = self.critic_state.replace(params=updated_params)
-        current_params = self.target_state.params
-        updated_params = {**current_params, **particle_preprocessor_params}
-        self.target_state = self.target_state.replace(params=updated_params)
+        critic_state = flax.core.unfreeze(self.critic_state)
+        target_state = flax.core.unfreeze(self.target_state)
 
-        logger.info("ParticlePreprocessor parameters successfully loaded.")
-
+        critic_state["params"]["preprocessor"] = pre_params
+        target_state["params"]["preprocessor"] = pre_params
+       
+        self.critic_state = self.critic_state.replace(
+            params=flax.core.freeze(critic_state["params"]),
+            step=self.critic_state.step, 
+            opt_state=self.critic_state.opt_state, 
+        )
+        self.target_state = self.target_state.replace(
+            params=flax.core.freeze(target_state["params"]),
+            step=self.target_state.step, 
+            opt_state=self.target_state.opt_state, 
+        )
+        logger.info("Preprocessor parameters restored.")
     
     def load_encoder(self, filename: str, directory: str = "Models"):
         """

@@ -87,11 +87,11 @@ class BaslerCameraObservable(Observable, ABC):
         # os.makedirs("images")
         
         self.image_queue = queue.Queue()
-        # self.image_saving_thread = threading.Thread(
-        #     target=self.save_images_async, daemon=True
-        # )
+        self.image_saving_thread = threading.Thread(
+            target=self.save_images_async, daemon=True
+        )
         self.image_count = 0
-        # self.image_saving_thread.start()
+        self.image_saving_thread.start()
         self.autoencoder = autoencoder
         self.init_autoencoder(model_path)
         self.threshold = 0.6
@@ -207,11 +207,11 @@ class BaslerCameraObservable(Observable, ABC):
                 f"Number of particles detected {len(positions)} is not equal to the expected number of particles {self.number_particles}."
             )
             
-        # contour_image = onp.array(original_image, dtype=np.uint8)
-        # for position in positions:
-        #     center = tuple([position[1], position[0]])
-        #     cv2.circle(contour_image, center, 2, (255, 0, 0), -1)
-        # self.image_queue.put(contour_image)
+        contour_image = onp.array(original_image, dtype=np.uint8)
+        for position in positions:
+            center = tuple([position[1], position[0]])
+            cv2.circle(contour_image, center, 2, (255, 0, 0), -1)
+        self.image_queue.put(contour_image)
         return positions.reshape(1, -1, 2)
 
     def peak_detection(self, cleaned_image):

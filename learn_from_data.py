@@ -140,20 +140,18 @@ class ActorNet(nn.Module):
         x = jnp.concatenate([x, occ], axis=-1)  # (batch, t*h + hidden_dim)
         x = nn.LayerNorm()(x)  # (batch, t*h + hidden_dim)
         x = nn.Dense(self.hidden_dim)(x)  # (batch, hidden_dim)
-        x = nn.silu(x)  # (batch, hidden_dim)
+        y = nn.silu(x)  # (batch, hidden_dim)
         for _ in range(4):
-            y = nn.LayerNorm()(x)
+            y = nn.LayerNorm()(y)
             y = nn.Dense(self.hidden_dim)(y)
             y = nn.silu(y)
 
 
         mu = nn.Dense(action_dimension)(y)
-        mu = jnp.tanh(mu) * 3.0
         log_std = nn.Dense(action_dimension)(y)
         log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
 
         out = jnp.concatenate([mu, log_std], axis=-1)
-        z= nn.BatchNorm(use_running_average=not train)(out)  # (batch, action_dim*2)
         return out, carry
 
 
@@ -207,7 +205,6 @@ class CriticNet(nn.Module):
 
         q1 = q_net("q1")
         q2 = q_net("q2")
-        u = nn.BatchNorm(use_running_average=not train)(q1)  # (batch, 1)
         return q1, q2
 
 
@@ -247,8 +244,8 @@ class OccupancyMapper(nn.Module):
         return x
 sequence_length = 1
 resolution = 253
-number_particles = 30
-learning_rate = 3e-3
+number_particles = 14
+learning_rate =5e-3
 
 obs = srl.observables.Observable(0)
 task = srl.tasks.MappingTask(OccupancyMapper(), model_path="Models/occupancy_mapper_6_2.pkl", resolution=(resolution, resolution))
@@ -333,7 +330,7 @@ engine = OfflineLearning()
 
 
 protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_2")
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_5")
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(engine, 10000, 10)

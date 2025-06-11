@@ -52,7 +52,7 @@ class MappingTask(Task):
     def init_mapper(self, model_path: str = None):
         params = self.mapper.init(jax.random.PRNGKey(0), jnp.ones((1, 64,64, 1)))
         self.model_state = TrainState.create(
-            apply_fn=self.mapper.apply, params=params["params"], tx=optax.adam(0.001)
+            apply_fn=jax.jit(self.mapper.apply), params=params["params"], tx=optax.adam(0.001)
         )
         with open(model_path, "rb") as f:
             model_params, opt_state = pickle.load(f)

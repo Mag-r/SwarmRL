@@ -33,7 +33,6 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
 class Autoencoder(nn.Module):
-    @nn.remat
     @nn.compact
     def __call__(self, x):
         # Encoder
@@ -92,7 +91,7 @@ class OccupancyMapper(nn.Module):
 sequence_length = 1
 resolution = 253
 
-number_particles = 30
+number_particles = 14
 learning_rate = 3e-3
 
 lock = Lock()
@@ -133,7 +132,7 @@ protocol = setupNetwork.defineRLAgent(
 )
 
 protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_2")
+# protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_1")
 
 rl_trainer = Trainer([protocol], lock=lock, deployment_mode=learning_rate == 0.0)
 print("start training", flush=True)

@@ -126,20 +126,18 @@ class ActorNet(nn.Module):
         x = jnp.concatenate([x, occ], axis=-1)  # (batch, t*h + hidden_dim)
         x = nn.LayerNorm()(x)  # (batch, t*h + hidden_dim)
         x = nn.Dense(self.hidden_dim)(x)  # (batch, hidden_dim)
-        x = nn.silu(x)  # (batch, hidden_dim)
+        y = nn.silu(x)  # (batch, hidden_dim)
         for _ in range(4):
-            y = nn.LayerNorm()(x)
+            y = nn.LayerNorm()(y)
             y = nn.Dense(self.hidden_dim)(y)
             y = nn.silu(y)
 
 
         mu = nn.Dense(action_dimension)(y)
-        mu = jnp.tanh(mu) * 3.0
         log_std = nn.Dense(action_dimension)(x)
         log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
 
         out = jnp.concatenate([mu, log_std], axis=-1)
-        z= nn.BatchNorm(use_running_average=not train)(out)  # (batch, action_dim*2)
         return out, carry
 
 
@@ -193,7 +191,6 @@ class CriticNet(nn.Module):
 
         q1 = q_net("q1")
         q2 = q_net("q2")
-        u = nn.BatchNorm(use_running_average=not train)(q1)  # (batch, 1)
         return q1, q2
 
 
@@ -270,8 +267,8 @@ def defineRLAgent(
 
     loss = srl.losses.SoftActorCriticGradientLoss(
         value_function=value_function,
-        minimum_entropy=-action_dimension*5,
-        polyak_averaging_tau=0.1,
+        minimum_entropy=-action_dimension*2,
+        polyak_averaging_tau=0.2,
         lock=lock,
         validation_split=0.01,
         fix_temperature=False,

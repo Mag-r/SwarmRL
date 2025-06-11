@@ -131,7 +131,6 @@ class ContinuousActionModel(Network, ABC):
             train = False,
         )
         params = variables["params"]
-        batch_stats = variables["batch_stats"]
         model_summary = self.model.tabulate(
             jax.random.PRNGKey(1),
             jnp.ones(list(self.input_shape)),
@@ -144,7 +143,7 @@ class ContinuousActionModel(Network, ABC):
         )
         print(model_summary)
         *_, self.carry = self.model.apply(
-            {"params": params, "batch_stats": batch_stats},
+            {"params": params},
             jnp.ones(list(self.input_shape)),
             jnp.ones(
                 list([self.input_shape[0], 1, 64,64,1])
@@ -166,10 +165,9 @@ class ContinuousActionModel(Network, ABC):
             # )
         else:
             return CustomTrainState.create(
-                apply_fn=self.model.apply,
+                apply_fn=jax.jit(self.model.apply, static_argnames=["train"]),
                 params=params,
                 tx=self.optimizer,
-                batch_stats=batch_stats,
             )
 
     def reinitialize_network(self):
@@ -197,7 +195,7 @@ class ContinuousActionModel(Network, ABC):
         )
 
         
-    def update_model(self, grads, updated_batch_stats=None):
+    def update_model(self, grads):
         """
         Train the model.
 
@@ -210,11 +208,7 @@ class ContinuousActionModel(Network, ABC):
             raise NotImplementedError
         else:
             self.model_state = self.model_state.apply_gradients(grads=grads)
-        if updated_batch_stats is None:
-            updated_batch_stats = self.model_state.batch_stats
-        self.model_state = self.model_state.replace(
-            batch_stats=updated_batch_stats
-        )  # Update batch stats
+
         # Logging for post-train model state
         logger.debug(f"{self.model_state=}")
         logger.debug("Model updated")
@@ -257,35 +251,31 @@ class ContinuousActionModel(Network, ABC):
         )
         dropout_subkey = jax.random.fold_in(self.dropout_key, self.iteration)
         try:
-            (logits, _), batch_stats_update = self.model_state.apply_fn(
-                {"params": params, "batch_stats": self.model_state.batch_stats},
+            (logits, _)= self.model_state.apply_fn(
+                {"params": params},
                 jnp.array(observables),
                 jnp.array(occupancy_map),
                 jnp.array(previous_actions),
                 carry,
                 train = not self.deployment_mode,
-                mutable=["batch_stats"],
                 rngs={"dropout": dropout_subkey},
             )
         except AttributeError:  # We need this for loaded models.
-            (logits, _), batch_stats_update = self.model_state.apply_fn(
+            logits, _ = self.model_state.apply_fn(
                 {
                     "params": self.model_state["params"],
-                    "batch_stats": self.model_state["batch_stats"],
                 },
                 jnp.array(observables),
                 jnp.array(occupancy_map),
                 jnp.array(previous_actions),
                 carry,
                 train = not self.deployment_mode,
-                mutable=["batch_stats"],
                 rngs={"dropout": dropout_subkey},
             )
-        # self.model_state = self.model_state.replace(batch_stats=batch_stats_update["batch_stats"])
         action, log_probs = self.sampling_strategy(
             logits, subkey=sampling_subkey, calculate_log_probs=True
         )
-        return action, log_probs, batch_stats_update["batch_stats"], logits.squeeze()
+        return action, log_probs, logits.squeeze()
 
     def compute_action(self, observables, previous_actions, occupancy_map) -> jnp.ndarray:
         """Computes an action from the action space. This applies the exploration strategy and does not require log-probs.
@@ -306,7 +296,6 @@ class ContinuousActionModel(Network, ABC):
             logits, self.carry = self.model_state.apply_fn(
                 {
                     "params": self.model_state.params,
-                    "batch_stats": self.model_state.batch_stats,
                 },
                 jnp.array(observables),
                 jnp.array(occupancy_map),
@@ -319,7 +308,6 @@ class ContinuousActionModel(Network, ABC):
             logits, self.carry = self.model_state.apply_fn(
                 {
                     "params": self.model_state["params"],
-                    "batch_stats": self.model_state["batch_stats"],
                 },
                 jnp.array(observables),
                 jnp.array(occupancy_map),
@@ -368,12 +356,11 @@ class ContinuousActionModel(Network, ABC):
         opt_step = self.model_state.step
         epoch = self.epoch_count
         carry = self.carry
-        batch_stats = self.model_state.batch_stats
         os.makedirs(directory, exist_ok=True)
 
         with open(directory + "/" + filename + ".pkl", "wb") as f:
             pickle.dump(
-                (model_params, opt_state, opt_step, epoch, carry, batch_stats), f
+                (model_params, opt_state, opt_step, epoch, carry), f
             )
 
     def restore_model_state(self, filename: str = "model", directory: str = "Models"):
@@ -393,7 +380,7 @@ class ContinuousActionModel(Network, ABC):
         """
 
         with open(directory + "/" + filename + ".pkl", "rb") as f:
-            model_params, opt_state, opt_step, epoch, carry, batch_stats = pickle.load(
+            model_params, opt_state, opt_step, epoch, carry= pickle.load(
                 f
             )
 
@@ -401,7 +388,6 @@ class ContinuousActionModel(Network, ABC):
             params=model_params,
             opt_state=opt_state,
             step=opt_step,
-            batch_stats=batch_stats,
         )
         logger.info(self.model_state.params.keys())
         self.carry = carry
@@ -424,37 +410,54 @@ class ContinuousActionModel(Network, ABC):
             self.model_state = self.model_state.replace(tx=optimizer)
             logger.info("Optimizer successfully set.")
 
-    def load_particle_preprocessor_params(self, filename: str, directory: str = "Models"):
+    def set_optimizer(self, optimizer: GradientTransformation):
         """
-        Load only the parameters of the ParticlePreprocessor from a saved model.
+        Set the optimizer for the model.
+
+        Parameters
+        ----------
+        optimizer : GradientTransformation
+            The optimizer to set for the model.
+        """
+        if isinstance(self.optimizer, dict):
+            raise NotImplementedError
+        else:
+            self.model_state = self.model_state.replace(tx=optimizer, step=0)
+            self.optimizer = optimizer
+            logger.info("Optimizer set.")
+
+
+    def restore_preprocessor_state(self,
+                                filename: str = "model",
+                                directory: str = "Models"):
+        """
+        Restore only the preprocessor’s parameters from a checkpoint.
 
         Parameters
         ----------
         filename : str
-            Name of the model state file.
+            Name of the pickle file (without .pkl)
         directory : str
-            Path to the model state file.
-
-        Updates
-        -------
-        Updates the ParticlePreprocessor parameters in the current model.
+            Directory where the file lives.
         """
-        # Load the saved model state
-        with open(os.path.join(directory, filename + ".pkl"), "rb") as f:
-            model_params, _, _, _, _, _ = pickle.load(f)
+        with open(f"{directory}/{filename}.pkl", "rb") as f:
+            model_params, opt_state, opt_step, epoch, carry= pickle.load(f)
 
-        # Extract ParticlePreprocessor parameters
-        particle_preprocessor_params = {
-            k: v for k, v in model_params.items() if "ParticlePreprocessor" in k
-        }
+        pre_params = model_params["preprocessor"]
 
-        # Update the current model's ParticlePreprocessor parameters
-        current_params = self.model_state.params
-        updated_params = {**current_params, **particle_preprocessor_params}
-        self.model_state = self.model_state.replace(params=updated_params)
+        ms = flax.core.unfreeze(self.model_state)
 
-        logger.info("ParticlePreprocessor parameters successfully loaded.")
-        
+        ms["params"]["preprocessor"] = pre_params
+
+
+        self.model_state = self.model_state.replace(
+            params=flax.core.freeze(ms["params"]),
+            # step=self.model_state.step, 
+            opt_state=self.model_state.opt_state, 
+        )
+
+        logger.info("Preprocessor parameters restored.")
+                
     def load_encoder(self, filename: str, directory: str = "Models"):
         """
         Load the encoder parameters from a saved model.
@@ -502,26 +505,23 @@ class ContinuousActionModel(Network, ABC):
         )
         dropout_subkey = jax.random.fold_in(self.dropout_key, self.iteration)
         try:
-            (logits, _), batch_stats_update = self.model_state.apply_fn(
-                {"params": params, "batch_stats": self.model_state.batch_stats},
+            logits, _= self.model_state.apply_fn(
+                {"params": params},
                 jnp.array(observables),
                 jnp.array(previous_actions),
                 carry,
                 train = not self.deployment_mode,
-                mutable=["batch_stats"],
                 rngs={"dropout": dropout_subkey},
             )
         except AttributeError:  # We need this for loaded models.
-            (logits, _), batch_stats_update = self.model_state.apply_fn(
+            logits, _ = self.model_state.apply_fn(
                 {
                     "params": self.model_state["params"],
-                    "batch_stats": self.model_state["batch_stats"],
                 },
                 jnp.array(observables),
                 jnp.array(previous_actions),
                 carry,
                 train = not self.deployment_mode,
-                mutable=["batch_stats"],
                 rngs={"dropout": dropout_subkey},
             )
         logits = logits.squeeze()
