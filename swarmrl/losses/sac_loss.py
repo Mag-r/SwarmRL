@@ -517,7 +517,6 @@ class SoftActorCriticGradientLoss(Loss):
             start_idx: int,
             batch_size: int,
         ):
-            # Standard slicing
             f_batch = feat_train[start_idx : start_idx + batch_size]
             nf_batch = next_feat_train[start_idx : start_idx + batch_size]
             a_batch = act_train[start_idx : start_idx + batch_size]

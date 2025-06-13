@@ -134,7 +134,7 @@ class ActorNet(nn.Module):
 
 
         mu = nn.Dense(action_dimension)(y)
-        log_std = nn.Dense(action_dimension)(x)
+        log_std = nn.Dense(action_dimension)(y)
         log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
 
         out = jnp.concatenate([mu, log_std], axis=-1)
@@ -178,19 +178,19 @@ class CriticNet(nn.Module):
         sa = nn.Dense(self.hidden_dim)(sa)  # (batch, hidden_dim)
         sa = nn.silu(sa)  # (batch, hidden_dim)
 
-        def q_net(name: str):
-            y = sa
+        def q_net(name: str, state_action: jnp.ndarray = sa) -> jnp.ndarray:
+            z = state_action
             for i in range(4):
-                z = nn.LayerNorm()(y)
+                z = nn.LayerNorm()(z)
                 z = nn.Dense(self.hidden_dim, name=f"{name}_fc{i}")(z)
                 z = nn.silu(z)
                 z = nn.Dropout(self.dropout_rate)(z, deterministic=not train)
 
-            q = nn.Dense(1, name=f"{name}_out")(y)
+            q = nn.Dense(1, name=f"{name}_out")(z)
             return q
 
-        q1 = q_net("q1")
-        q2 = q_net("q2")
+        q1 = q_net("q1", sa)
+        q2 = q_net("q2", sa)
         return q1, q2
 
 
@@ -230,7 +230,7 @@ def defineRLAgent(
         action_dimension=action_dimension, action_limits=action_limits
     )
     exploration_policy = srl.exploration_policies.GlobalOUExploration(
-        drift=0.1,
+        drift=0.12,
         volatility=0.08,
         action_dimension=action_dimension,
         action_limits=action_limits,
@@ -272,7 +272,7 @@ def defineRLAgent(
         lock=lock,
         validation_split=0.01,
         fix_temperature=False,
-        batch_size=110,
+        batch_size=256,
     )
 
     protocol = srl.agents.MPIActorCriticAgent(
@@ -282,7 +282,7 @@ def defineRLAgent(
         task=task,
         observable=obs,
         loss=loss,
-        max_samples_in_trajectory=100,
+        max_samples_in_trajectory=10000,
         lock=lock,
     )
     # protocol.set_optimizer(optimizer)

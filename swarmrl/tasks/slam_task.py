@@ -76,31 +76,37 @@ class MappingTask(Task):
     def __call__(self, positions: np.ndarray) -> float:
         start = time.time()
         self.iterations += 1
-        if self.iterations % 3 == 0 and self.iterations > 0:
-            with self.lock:
-                occupancy_map = jnp.array(self.actor_critic_agent.trajectory.occupancy_map[-1]).squeeze()
-            x, y = positions[0, :, 0], positions[0, :, 1]
-            x = np.array(x / self.range_pos * occupancy_map.shape[0], dtype=np.int32)
-            y = np.array(y / self.range_pos * occupancy_map.shape[1], dtype=np.int32)
-            occupancy_map.at[x, y].add(1)
-            occupancy_map = jnp.clip(occupancy_map, 0, 1000)
+        with self.lock:
+            occupancy_map = jnp.array(self.actor_critic_agent.trajectory.occupancy_map[-1]).squeeze()
+        x, y = positions[0, :, 0], positions[0, :, 1]
+        x = np.array(x / self.range_pos * occupancy_map.shape[0], dtype=np.int32)
+        y = np.array(y / self.range_pos * occupancy_map.shape[1], dtype=np.int32)
+        occupancy_map.at[x, y].add(1)
+        occupancy_map = jnp.clip(occupancy_map, 0, 1000)
 
-            predicted_arena = self.mapper.apply(
-                {"params": self.model_state.params}, occupancy_map[jnp.newaxis, ..., jnp.newaxis]
-            )
-            predicted_arena = jnp.squeeze(predicted_arena)
-            self.image_queue.put(predicted_arena)
-            reward = jnp.linalg.norm(predicted_arena - 0.75)
-            number_certain_cells = jnp.sum(jnp.abs(predicted_arena - 0.5)>0.45)/64.0
-            logger.info(f"Certain cells: {number_certain_cells/0.64}%, difference to previous: {(number_certain_cells - self.previous_certain_cells)*64}")
-            reward += number_certain_cells
-            reward, self.previous_reward = reward - self.previous_reward, reward
-            self.previous_certain_cells = number_certain_cells
-            logger.info(f"Reward: {reward}, time taken: {time.time() - start}")
-            return reward
-        return 0.0
+        predicted_arena = self.mapper.apply(
+            {"params": self.model_state.params}, occupancy_map[jnp.newaxis, ..., jnp.newaxis]
+        )
+        predicted_arena = jnp.squeeze(predicted_arena)
+        self.image_queue.put(predicted_arena)
+        reward = jnp.linalg.norm(predicted_arena - 0.75)
+        number_certain_cells = jnp.sum(jnp.abs(predicted_arena - 0.5)>0.45)/64.0
+        logger.info(f"Certain cells: {number_certain_cells/0.64}%, difference to previous: {(number_certain_cells - self.previous_certain_cells)*64}")
+        reward += number_certain_cells
+        reward, self.previous_reward = reward - self.previous_reward, reward
+        self.previous_certain_cells = number_certain_cells
+        logger.info(f"Reward: {reward}, time taken: {time.time() - start}")
+        return reward
+
 
     def stop_image_saving_thread(self):
         """Stop the image saving thread."""
         self.image_queue.put((None, None))  # Send exit signal
         self.image_saving_thread.join()
+        
+    def reset_task(self):
+        """Reset the task state."""
+        self.iterations = 0
+        self.previous_certain_cells = 0
+        self.previous_reward = 0.0
+        logger.info("Task state reset.")

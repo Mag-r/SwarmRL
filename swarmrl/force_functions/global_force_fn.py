@@ -107,3 +107,12 @@ class GlobalForceFunction:
         """
         for agent in self.agents:
             self.agents[agent].save_agent(directory=directory)
+
+    def save_camera_image(self):
+        """
+        Save the camera image.
+        """
+        for agent in self.agents:
+            self.agents[agent].observable.compute_observable(
+                colloids=None
+            )

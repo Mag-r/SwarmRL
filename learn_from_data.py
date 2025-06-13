@@ -192,19 +192,19 @@ class CriticNet(nn.Module):
         sa = nn.Dense(self.hidden_dim)(sa)  # (batch, hidden_dim)
         sa = nn.silu(sa)  # (batch, hidden_dim)
 
-        def q_net(name: str):
-            y = sa
+        def q_net(name: str, sate_action: jnp.ndarray = sa) -> jnp.ndarray:
+            z = sate_action
             for i in range(4):
-                z = nn.LayerNorm()(y)
+                z = nn.LayerNorm()(z)
                 z = nn.Dense(self.hidden_dim, name=f"{name}_fc{i}")(z)
                 z = nn.silu(z)
                 z = nn.Dropout(self.dropout_rate)(z, deterministic=not train)
 
-            q = nn.Dense(1, name=f"{name}_out")(y)
+            q = nn.Dense(1, name=f"{name}_out")(z)
             return q
 
-        q1 = q_net("q1")
-        q2 = q_net("q2")
+        q1 = q_net("q1", sa)
+        q2 = q_net("q2", sa)
         return q1, q2
 
 
@@ -330,7 +330,7 @@ engine = OfflineLearning()
 
 
 protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_5")
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_3")
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(engine, 10000, 10)

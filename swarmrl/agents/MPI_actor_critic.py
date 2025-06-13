@@ -137,7 +137,7 @@ class MPIActorCriticAgent(Agent):
         self.critic_network.split_rng_key()
         return rewards, killed
 
-    def reset_agent(self, colloids: typing.List[Colloid]):
+    def reset_agent(self):
         """
         Reset several properties of the agent.
 
@@ -148,8 +148,10 @@ class MPIActorCriticAgent(Agent):
         colloids : typing.List[Colloid]
                 Colloids to use in the initialization.
         """
-        self.observable.initialize(colloids)
-        self.task.initialize(colloids)
+        # self.observable.initialize(colloids)
+        # self.task.initialize(colloids)
+        self.task.reset_task()
+        self.reset_trajectory()
 
     def reset_trajectory(self):
         """

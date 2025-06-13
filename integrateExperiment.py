@@ -61,7 +61,7 @@ def edge_pad(x, kernel_size):
         pad_width=((0, 0), (pad_h, pad_h), (pad_w, pad_w), (0, 0)),
         mode='edge'
     )
-
+    
 class OccupancyMapper(nn.Module):
     @nn.compact
     def __call__(self, x):
@@ -86,8 +86,6 @@ class OccupancyMapper(nn.Module):
         x = nn.Conv(1, (3, 3), padding="VALID")(x)
         x = nn.sigmoid(x)
         return x
-
-
 sequence_length = 1
 resolution = 253
 

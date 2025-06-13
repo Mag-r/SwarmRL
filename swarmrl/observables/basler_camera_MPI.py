@@ -178,7 +178,7 @@ class BaslerCameraObservable(Observable, ABC):
                 f"Image queue is starting to fill. Current size {self.image_queue.qsize()}"
             )
         image = cv2.resize(image, (506,506))
-        # self.image_queue.put(image.copy())
+        self.image_queue.put(image)
         image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
 
         positions = self.extract_positions(image)
