@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6342
+    labview_port = 6340
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  
@@ -162,11 +162,19 @@ class GauravExperiment(Engine):
         for _ in range(n_slices):
             action = force_model.calc_action(None)
             action = MPIAction(
-                magnitude=[80,80], frequency=[6,6], keep_magnetic_field=1, gradient=action
+                magnitude=[80, 80], frequency=[11, 21], keep_magnetic_field=1, gradient=action
             )
             self.send_action(action)
-            sleeping_time = max(0, self.keeping_time - (time.time() - start))
-            logger.warning(f"calculations take longer than expected: {time.time() - start:.2f} seconds") if sleeping_time == 0 else None
-            time.sleep(sleeping_time)
+            time.sleep(1)
+            force_model.set_training_mode(False)
+            while time.time() - start < self.keeping_time:
+                action = force_model.calc_action(None)
+                action = MPIAction(
+                    magnitude=[80,80], frequency=[10,20], keep_magnetic_field=1, gradient=action
+                )
+                self.send_action(action)
+                time.sleep(1)
+
             start = time.time()
+            force_model.set_training_mode(True)
             force_model.calc_reward(self.colloids)
