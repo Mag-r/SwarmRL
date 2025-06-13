@@ -15,6 +15,7 @@ from jax import numpy as jnp
 
 import flax.serialization
 import os
+import cv2
 
 
 logging.basicConfig(level=logging.INFO)
@@ -57,9 +58,17 @@ output_grid_3 = (output_grid_3 - np.min(output_grid_3)) / (
     np.max(output_grid_3) - np.min(output_grid_3)
 )
 
+output_grid_4 = np.load("final_arena.npy").astype(np.float32)
+output_grid_4 = (output_grid_4 - np.min(output_grid_4)) / (
+    np.max(output_grid_4) - np.min(output_grid_4)
+)
+output_grid_4 = cv2.resize(output_grid_4, (64, 64))
+output_grid_4 = output_grid_4.astype(np.float32)
+
 output_grid = np.array(output_grid)
 output_grid_2 = np.array(output_grid_2)
 output_grid_3 = np.array(output_grid_3)
+output_grid_4 = np.array(output_grid_4)
 
 fig, ax = plt.subplots(1, 3, figsize=(15, 5))
 ax[0].imshow(output_grid, cmap="binary")
@@ -72,6 +81,7 @@ plt.savefig("arena_maps.png")
 input_map = np.zeros((1, n_cells, n_cells), dtype=np.float32)
 input_map_2 = np.zeros((1, n_cells, n_cells), dtype=np.float32)
 input_map_3 = np.zeros((1, n_cells, n_cells), dtype=np.float32)
+input_map_4 = np.zeros((1, n_cells, n_cells), dtype=np.float32)
 
 for i in range(1):
     positions = np.load("trajectory_files/traj_circles.pkl", allow_pickle=True)[
@@ -104,6 +114,24 @@ for i in range(1):
         create_occupancy_map(positions, n_cells, range_pos, sampling_frequency=100)
     )
     input_map_3 = np.concatenate((input_map_3, input), axis=0)
+    
+    positions = np.load("trajectory_files/traj_final.pkl", allow_pickle=True)[
+        "features"
+    ].squeeze()
+    print(f"positions has shape{np.shape(positions)}")
+    input = np.array(
+        create_occupancy_map(positions, n_cells, range_pos, sampling_frequency=10)
+    )
+    input_map_4 = np.concatenate((input_map_4, input), axis=0)
+    
+    positions = np.load("trajectory_files/traj_final_2.pkl", allow_pickle=True)[
+        "features"
+    ].squeeze()
+    print(f"positions has shape{np.shape(positions)}")
+    input = np.array(
+        create_occupancy_map(positions, n_cells, range_pos, sampling_frequency=10)
+    )
+    input_map_4 = np.concatenate((input_map_4, input), axis=0)
 
 print(
     f"circles input map shape: {input_map.shape}, \n race input map shape: {input_map_2.shape}, \n slit input map shape: {input_map_3.shape}"
@@ -115,24 +143,25 @@ input_data_2 = input_map_2[..., None]  # Add batch and channel dimensions
 target_data_2 = output_grid_2[None, ..., None]  # Add batch and channel dimensions
 input_data_3 = input_map_3[..., None]  # Add batch and channel dimensions
 target_data_3 = output_grid_3[None, ..., None]  # Add batch and channel dimensions
+input_data_4 = input_map_4[..., None]  # Add batch and channel dimensions
+target_data_4 = output_grid_4[None, ..., None]  # Add batch and channel dimensions
 
 print(input_data.shape)
 print(target_data.shape)
-input_list = [input_data, input_data_2, input_data_3]
-target_list = [target_data, target_data_2, target_data_3]
-batch_size = 63
+input_list = [input_data, input_data_2, input_data_3, input_data_4]
+target_list = [target_data, target_data_2, target_data_3, target_data_4]
+batch_size =56
 key = jax.random.PRNGKey(int(time.time()))
 
 print(np.array(target_list).shape)
 
-
-# Generatorfunktion wie vorher
 def batch_generator(input_list, target_list, batch_size, key):
     n_sets = len(input_list)
     assert (
         batch_size % n_sets == 0
     ), "batch_size muss durch die Anzahl Arenen teilbar sein"
     samples_per_set = batch_size // n_sets
+    samples_per_set =[8,8,8,32]
 
     while True:
         inputs = []
@@ -142,10 +171,10 @@ def batch_generator(input_list, target_list, batch_size, key):
             data_len = input_list[i].shape[0]
             key, subkey = jax.random.split(key)
             sample_idxs = jax.random.choice(
-                subkey, data_len, shape=(samples_per_set,), replace=False
+                subkey, data_len, shape=(samples_per_set[i],), replace=False
             )
 
-            for j in range(samples_per_set):
+            for j in range(samples_per_set[i]):
                 key, rot_key = jax.random.split(key)
                 sample = input_list[i][sample_idxs[j]]
                 target = target_list[i][0]
@@ -166,99 +195,99 @@ def batch_generator(input_list, target_list, batch_size, key):
 gen = batch_generator(input_list, target_list, batch_size, key)
 
 
-class DWConv(nn.Module):
-    """Depthwise-Separable-Convolution (DWSC)"""
+# class DWConv(nn.Module):
+#     """Depthwise-Separable-Convolution (DWSC)"""
 
-    out_chan: int
-    stride: int = 1
+#     out_chan: int
+#     stride: int = 1
 
-    @nn.compact
-    def __call__(self, x):
-        in_chan = x.shape[-1]
-        # 1) Depthwise
-        x = nn.Conv(
-            features=in_chan,
-            kernel_size=(3, 3),
-            strides=(self.stride, self.stride),
-            padding="SAME",
-            feature_group_count=in_chan,  # depthwise
-            use_bias=True,
-        )(x)
-        x = nn.silu(x)
-        # 2) Pointwise
-        x = nn.Conv(
-            features=self.out_chan,
-            kernel_size=(1, 1),
-            strides=(1, 1),
-            padding="SAME",
-            use_bias=True,
-        )(x)
-        x = nn.silu(x)
-        return x
+#     @nn.compact
+#     def __call__(self, x):
+#         in_chan = x.shape[-1]
+#         # 1) Depthwise
+#         x = nn.Conv(
+#             features=in_chan,
+#             kernel_size=(3, 3),
+#             strides=(self.stride, self.stride),
+#             padding="SAME",
+#             feature_group_count=in_chan,  # depthwise
+#             use_bias=True,
+#         )(x)
+#         x = nn.silu(x)
+#         # 2) Pointwise
+#         x = nn.Conv(
+#             features=self.out_chan,
+#             kernel_size=(1, 1),
+#             strides=(1, 1),
+#             padding="SAME",
+#             use_bias=True,
+#         )(x)
+#         x = nn.silu(x)
+#         return x
 
 
-class SmallUnetDWSC(nn.Module):
-    """Kompaktes U-Net mit Depthwise-Separable-Convs, ~85k Parameter"""
+# class SmallUnetDWSC(nn.Module):
+#     """Kompaktes U-Net mit Depthwise-Separable-Convs, ~85k Parameter"""
 
-    @nn.compact
-    def __call__(self, x):
-        # ----------------
-        # Encoder
-        # ----------------
-        # Block 1: 1 -> 32, einfacher DWSC, Stride=2
-        x1 = DWConv(out_chan=32, stride=2)(x)  # 64x64x1 --> 32x32x32
+#     @nn.compact
+#     def __call__(self, x):
+#         # ----------------
+#         # Encoder
+#         # ----------------
+#         # Block 1: 1 -> 32, einfacher DWSC, Stride=2
+#         x1 = DWConv(out_chan=32, stride=2)(x)  # 64x64x1 --> 32x32x32
 
-        # Block 2: 32 -> 64, 2×DWSC, erster mit Stride=2
-        y = DWConv(out_chan=64, stride=2)(x1)  # 32x32x32 --> 16x16x64
-        x2 = DWConv(out_chan=64, stride=1)(y)  # 16x16x64 --> 16x16x64
+#         # Block 2: 32 -> 64, 2×DWSC, erster mit Stride=2
+#         y = DWConv(out_chan=64, stride=2)(x1)  # 32x32x32 --> 16x16x64
+#         x2 = DWConv(out_chan=64, stride=1)(y)  # 16x16x64 --> 16x16x64
 
-        # Block 3: 64 -> 96, 2×DWSC, erster mit Stride=2
-        z = DWConv(out_chan=96, stride=2)(x2)  # 16x16x64 -->  8x 8x96
-        x3 = DWConv(out_chan=96, stride=1)(z)  #  8x 8x96 -->  8x 8x96
+#         # Block 3: 64 -> 96, 2×DWSC, erster mit Stride=2
+#         z = DWConv(out_chan=96, stride=2)(x2)  # 16x16x64 -->  8x 8x96
+#         x3 = DWConv(out_chan=96, stride=1)(z)  #  8x 8x96 -->  8x 8x96
 
-        # ----------------
-        # Bottleneck: 96 -> 96, 2×DWSC, Stride=1
-        b = DWConv(out_chan=96, stride=1)(x3)  #  8x 8x96 -->  8x 8x96
-        b = DWConv(out_chan=96, stride=1)(b)  #  8x 8x96 -->  8x 8x96
+#         # ----------------
+#         # Bottleneck: 96 -> 96, 2×DWSC, Stride=1
+#         b = DWConv(out_chan=96, stride=1)(x3)  #  8x 8x96 -->  8x 8x96
+#         b = DWConv(out_chan=96, stride=1)(b)  #  8x 8x96 -->  8x 8x96
 
-        # ----------------
-        # Decoder
-        # ----------------
-        # Up-Block 1:  8x8x96 --> Upsample -> 16x16x96 -> 2×DWSC -> 16x16x64
-        u1 = jax.image.resize(b, (b.shape[0], 16, 16, 96), method="nearest")
-        u1 = DWConv(out_chan=64, stride=1)(u1)
-        u1 = DWConv(out_chan=64, stride=1)(u1)
-        # Skip-Connection: x2 (16x16x64)
-        u1 = jnp.concatenate([u1, x2], axis=-1)  # 16x16x128
-        u1 = nn.Conv(features=64, kernel_size=(1, 1), padding="SAME", use_bias=True)(u1)
-        u1 = nn.silu(u1)
+#         # ----------------
+#         # Decoder
+#         # ----------------
+#         # Up-Block 1:  8x8x96 --> Upsample -> 16x16x96 -> 2×DWSC -> 16x16x64
+#         u1 = jax.image.resize(b, (b.shape[0], 16, 16, 96), method="nearest")
+#         u1 = DWConv(out_chan=64, stride=1)(u1)
+#         u1 = DWConv(out_chan=64, stride=1)(u1)
+#         # Skip-Connection: x2 (16x16x64)
+#         u1 = jnp.concatenate([u1, x2], axis=-1)  # 16x16x128
+#         u1 = nn.Conv(features=64, kernel_size=(1, 1), padding="SAME", use_bias=True)(u1)
+#         u1 = nn.silu(u1)
 
-        # Up-Block 2: 16x16x64 --> Upsample -> 32x32x64 -> 2×DWSC -> 32x32x32
-        u2 = jax.image.resize(u1, (u1.shape[0], 32, 32, 64), method="nearest")
-        u2 = DWConv(out_chan=32, stride=1)(u2)
-        u2 = DWConv(out_chan=32, stride=1)(u2)
-        # Skip-Connection: x1 (32x32x32)
-        u2 = jnp.concatenate([u2, x1], axis=-1)  # 32x32x64
-        u2 = nn.Conv(features=32, kernel_size=(1, 1), padding="SAME", use_bias=True)(u2)
-        u2 = nn.silu(u2)
+#         # Up-Block 2: 16x16x64 --> Upsample -> 32x32x64 -> 2×DWSC -> 32x32x32
+#         u2 = jax.image.resize(u1, (u1.shape[0], 32, 32, 64), method="nearest")
+#         u2 = DWConv(out_chan=32, stride=1)(u2)
+#         u2 = DWConv(out_chan=32, stride=1)(u2)
+#         # Skip-Connection: x1 (32x32x32)
+#         u2 = jnp.concatenate([u2, x1], axis=-1)  # 32x32x64
+#         u2 = nn.Conv(features=32, kernel_size=(1, 1), padding="SAME", use_bias=True)(u2)
+#         u2 = nn.silu(u2)
 
-        # Up-Block 3: 32x32x32 --> Upsample -> 64x64x32 -> 1×DWSC -> 64x64x16
-        u3 = jax.image.resize(u2, (u2.shape[0], 64, 64, 32), method="nearest")
-        u3 = DWConv(out_chan=16, stride=1)(u3)
-        # Skip vom Input (64x64x1):
-        u3 = jnp.concatenate([u3, x], axis=-1)  # 64x64x17
-        u3 = nn.Conv(features=16, kernel_size=(1, 1), padding="SAME", use_bias=False)(
-            u3
-        )
-        u3 = nn.silu(u3)
+#         # Up-Block 3: 32x32x32 --> Upsample -> 64x64x32 -> 1×DWSC -> 64x64x16
+#         u3 = jax.image.resize(u2, (u2.shape[0], 64, 64, 32), method="nearest")
+#         u3 = DWConv(out_chan=16, stride=1)(u3)
+#         # Skip vom Input (64x64x1):
+#         u3 = jnp.concatenate([u3, x], axis=-1)  # 64x64x17
+#         u3 = nn.Conv(features=16, kernel_size=(1, 1), padding="SAME", use_bias=False)(
+#             u3
+#         )
+#         u3 = nn.silu(u3)
 
-        # ----------------
-        # Final Output-Layer: 16 -> 1
-        out = nn.Conv(features=1, kernel_size=(1, 1), padding="SAME", use_bias=False)(
-            u3
-        )
-        out = nn.sigmoid(out)
-        return out
+#         # ----------------
+#         # Final Output-Layer: 16 -> 1
+#         out = nn.Conv(features=1, kernel_size=(1, 1), padding="SAME", use_bias=False)(
+#             u3
+#         )
+#         out = nn.sigmoid(out)
+#         return out
 
 
         
@@ -371,7 +400,7 @@ class OccupancyMapper(nn.Module):
         x = edge_pad(x, (3, 3))
         x = nn.Conv(32, (3, 3), padding="VALID")(x)
         x = nn.silu(x)
-
+        
         x = edge_pad(x, (3, 3))
         x = nn.Conv(32, (3, 3), padding="VALID")(x)
         x = nn.silu(x)
@@ -462,7 +491,7 @@ model_summary = model.tabulate(
 print(model_summary)
 params = model.init(jax.random.PRNGKey(0), jnp.ones(list([1, n_cells, n_cells, 1])))
 lr_schedule = optax.exponential_decay(
-    init_value=3e-3, transition_steps=300, decay_rate=0.95, staircase=True
+    init_value=5e-3, transition_steps=300, decay_rate=0.95, staircase=True
 )
 optimizer = optax.adam(learning_rate=lr_schedule)
 state = TrainState.create(apply_fn=model.apply, params=params["params"], tx=optimizer)
@@ -473,6 +502,7 @@ losses = np.array([])
 losses_circles = np.array([])
 losses_slit = np.array([])
 losses_race = np.array([])
+losses_final = np.array([])
 print("Starting training...", flush=True)
 for epoch in range(30001):  # Number of epochs
     input_batch, target_batch = next(gen)
@@ -493,6 +523,9 @@ for epoch in range(30001):  # Number of epochs
         plt.scatter(
             eval_points, losses_slit, label="Loss Slit", s=20, c="black", marker="x"
         )
+        plt.scatter(
+            eval_points, losses_final, label="Loss Final", s=20, c="blue", marker="x"
+        )
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
     plt.title("Training Loss")
@@ -503,9 +536,11 @@ for epoch in range(30001):  # Number of epochs
         _, loss_circles = train_step(state, input_data, target_data)
         _, loss_race = train_step(state, input_data_2, target_data_2)
         _, loss_slit = train_step(state, input_data_3, target_data_3)
+        _, loss_final = train_step(state, input_data_4, target_data_4)
         losses_circles = np.append(losses_circles, loss_circles)
         losses_race = np.append(losses_race, loss_race)
         losses_slit = np.append(losses_slit, loss_slit)
+        losses_final = np.append(losses_final, loss_final)
         logger.info(f"Step {epoch}, loss: {loss:.4f}")
         occ = np.ones((1, n_cells, n_cells, 1), dtype=np.float32)
         occ[:,32:,:,0]=0
@@ -529,14 +564,14 @@ for epoch in range(30001):  # Number of epochs
             f"Difference {np.sum(np.array(target_data[0, ..., 0]!= (prediction > 0.8)))}"
         )
 
-        ax[1, 0].imshow(input_data_2[-1, ..., 0], cmap="binary")
-        prediction = state.apply_fn({"params": state.params}, input_data_2[-2:-1])[
+        ax[1, 0].imshow(input_data_4[-1, ..., 0], cmap="binary")
+        prediction = state.apply_fn({"params": state.params}, input_data_4[-2:-1])[
             0, ..., 0
         ]
         ax[1, 1].imshow(prediction, cmap="binary")
-        ax[1, 2].imshow((prediction > 0.8) != (target_data_2[0, ..., 0]), cmap="binary")
+        ax[1, 2].imshow((prediction > 0.8) != (target_data_4[0, ..., 0]), cmap="binary")
         ax[1, 2].set_title(
-            f"Difference {np.sum(np.array(target_data_2[0, ..., 0]!= (prediction > 0.8)))}"
+            f"Difference {np.sum(np.array(target_data_4[0, ..., 0]!= (prediction > 0.8)))}"
         )
 
         plt.savefig(f"map_{epoch}.png")
