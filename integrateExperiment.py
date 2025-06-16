@@ -90,7 +90,7 @@ sequence_length = 1
 resolution = 253
 
 number_particles = 14
-learning_rate = 3e-3
+learning_rate = 3e-4
 
 lock = Lock()
 obs = BaslerCameraObservable(
@@ -125,13 +125,13 @@ sim = GauravSim(
 )
 experiment = GauravExperiment(sim)
 
-protocol = setupNetwork.defineRLAgent(
+protocol, opt = setupNetwork.defineRLAgent(
     obs, task, learning_rate=learning_rate, sequence_length=sequence_length, lock=lock, number_particles=number_particles
 )
 
 protocol.restore_agent(identifier=task.__class__.__name__)
 # protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_1")
-
+protocol.set_optimizer(opt)
 rl_trainer = Trainer([protocol], lock=lock, deployment_mode=learning_rate == 0.0)
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(experiment, 1000, 10)

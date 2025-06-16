@@ -202,7 +202,8 @@ def defineRLAgent(
     sequence_length: int = 4,
     number_particles: int = 7,
     lock=None,
-) -> srl.agents.MPIActorCriticAgent:
+) -> tuple[srl.agents.MPIActorCriticAgent, optax.GradientTransformation]:
+
     # Define the model
 
     if learning_rate == 0.0:
@@ -267,7 +268,7 @@ def defineRLAgent(
 
     loss = srl.losses.SoftActorCriticGradientLoss(
         value_function=value_function,
-        minimum_entropy=-action_dimension*2,
+        minimum_entropy=-action_dimension*5,
         polyak_averaging_tau=0.2,
         lock=lock,
         validation_split=0.01,
@@ -287,4 +288,4 @@ def defineRLAgent(
     )
     # protocol.set_optimizer(optimizer)
     task.set_agent(protocol)
-    return protocol
+    return protocol, optimizer
