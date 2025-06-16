@@ -98,7 +98,7 @@ protocol, opt = setupNetwork.defineRLAgent(
     obs, task, learning_rate=learning_rate, sequence_length=sequence_length, lock=lock, number_particles=number_particles
 )
 
-protocol.restore_agent(identifier=task.__class__.__name__)
+# protocol.restore_agent(identifier=task.__class__.__name__)
 # protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_2")
 # protocol.actor_network.set_temperature(1E-4)
 protocol.set_optimizer(opt)

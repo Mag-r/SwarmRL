@@ -82,7 +82,7 @@ class ActorNet(nn.Module):
         )
         self.lstm = self.ScanLSTM(features=2)
         temperature = self.param(
-            "temperature", lambda key, shape: jnp.full(shape, jnp.log(0.001)), (1,)
+            "temperature", lambda key, shape: jnp.full(shape, jnp.log(0.01)), (1,)
         )
 
     @nn.compact
@@ -92,7 +92,7 @@ class ActorNet(nn.Module):
                 jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
             )
         mean = self.param("mean", nn.initializers.normal(stddev=0.3), (action_dimension,))
-        std = self.param("std", lambda key, shape: jnp.full(shape, -1.5), (action_dimension,))
+        std = self.param("std", lambda key, shape: jnp.full(shape, -1.0), (action_dimension,))
         batch_size= x.shape[0]
         nn.BatchNorm(use_running_average=not train)(x)
         mean = jnp.tile(mean, (batch_size, 1))
@@ -121,12 +121,12 @@ class CriticNet(nn.Module):
         x = jnp.concatenate([x, action], axis=-1)
         q_1 = nn.Dense(features=12, name="Critic_1")(x)
         q_2 = nn.Dense(features=12, name="Critic_2")(x)
-        q_1 = nn.sigmoid(q_1)
-        q_2 = nn.sigmoid(q_2)
-        q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
-        q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
+        q_1 = nn.silu(q_1)
+        q_2 = nn.silu(q_2)
+
         q_1 = nn.Dense(features=1)(x)
         q_2 = nn.Dense(features=1)(x)
+        y = nn.BatchNorm(use_running_average=not train)(q_1)
         return q_1, q_2
 
 

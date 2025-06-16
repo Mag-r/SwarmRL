@@ -81,6 +81,7 @@ class MPIActorCriticAgent(Agent):
         # Trajectory to be updated.
         self.trajectory = GlobalTrajectoryInformation()
         self.max_samples_in_trajectory = max_samples_in_trajectory
+        self.iterations_since_success = 0
 
     def __name__(self) -> str:
         """
@@ -108,6 +109,15 @@ class MPIActorCriticAgent(Agent):
         # Collect data for returns.
         rewards = self.trajectory.rewards
         killed = self.trajectory.killed
+        
+        if np.mean(rewards[-10:]) > 0.9 and self.iterations_since_success > 5:
+            logger.info(
+                f"Agent {self.particle_type} has reached the goal with a mean reward of {np.mean(rewards[-10:])}. {self.iterations_since_success} iterations since last success."
+            )
+            self.save_agent(
+                identifier=f"hexagon_success_{np.mean(rewards[-10:]):.4f}_{self.iterations_since_success}")
+            self.iterations_since_success = 0
+            return rewards, True
         # Compute loss for actor and critic.
         logger.debug("Computing loss.")
         self.loss.compute_loss(
@@ -130,6 +140,7 @@ class MPIActorCriticAgent(Agent):
         # self.trajectory = GlobalTrajectoryInformation()
         self.actor_network.split_rng_key()
         self.critic_network.split_rng_key()
+        self.iterations_since_success += 1
         return rewards, killed
 
     def reset_agent(self, colloids: typing.List[Colloid]):
@@ -143,8 +154,9 @@ class MPIActorCriticAgent(Agent):
         colloids : typing.List[Colloid]
                 Colloids to use in the initialization.
         """
-        self.observable.initialize(colloids)
-        self.task.initialize(colloids)
+        # self.observable.initialize(colloids)
+        # self.task.initialize(colloids)
+        
 
     def reset_trajectory(self):
         """

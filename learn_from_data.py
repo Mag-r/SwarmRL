@@ -138,12 +138,12 @@ class CriticNet(nn.Module):
         x = jnp.concatenate([x, action], axis=-1)
         q_1 = nn.Dense(features=12, name="Critic_1")(x)
         q_2 = nn.Dense(features=12, name="Critic_2")(x)
-        q_1 = nn.sigmoid(q_1)
-        q_2 = nn.sigmoid(q_2)
-        q_1 = nn.BatchNorm(use_running_average=not train)(q_1)
-        q_2 = nn.BatchNorm(use_running_average=not train)(q_2)
+        q_1 = nn.silu(q_1)
+        q_2 = nn.silu(q_2)
+
         q_1 = nn.Dense(features=1)(x)
         q_2 = nn.Dense(features=1)(x)
+        y = nn.BatchNorm(use_running_average=not train)(q_1)
         return q_1, q_2
 sequence_length = 1
 resolution = 253
@@ -232,8 +232,8 @@ protocol = srl.agents.MPIActorCriticAgent(
 engine = OfflineLearning()
 
 
-# protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_7")
+protocol.restore_agent(identifier=task.__class__.__name__)
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_52")
 # protocol.actor_network.set_temperature(1e-3)
 # protocol.set_optimizer(optimizer)
 rl_trainer = Trainer([protocol])

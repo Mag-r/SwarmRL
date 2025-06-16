@@ -108,7 +108,6 @@ class GlobalContinuousTrainer(Trainer):
         rewards = [0.0]
         current_reward = 0.0
         linear_regression = 0.0
-        number_successful_episodes = 4
         # mp.set_start_method('spawn', force=True)
 
         force_fn = self.initialize_training()
@@ -156,10 +155,11 @@ class GlobalContinuousTrainer(Trainer):
 
                         if killed:
                             print(
-                                "Simulation has been ended by the task, ending training."
+                                "Reinitializing the engine, as the task has ended the training."
                             )
-                            self.engine.finalize()
-                            break
+                            self.engine.seperate_rafts()
+                            for agent in self.agents.values():
+                                agent.initialize_network()
 
                         rewards.append(current_reward)
                         logger.info(
