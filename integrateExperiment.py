@@ -90,7 +90,7 @@ sequence_length = 1
 resolution = 253
 
 number_particles = 14
-learning_rate = 3e-4
+learning_rate = 5e-3
 
 lock = Lock()
 obs = BaslerCameraObservable(

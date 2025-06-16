@@ -212,7 +212,7 @@ def defineRLAgent(
     else:
         lr_schedule = optax.cosine_decay_schedule(
             init_value=learning_rate,
-            decay_steps=10000,
+            decay_steps=1000,
         )
         optimizer = optax.chain(
             optax.clip_by_global_norm(

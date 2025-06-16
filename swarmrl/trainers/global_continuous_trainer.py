@@ -112,9 +112,7 @@ class GlobalContinuousTrainer(Trainer):
         # mp.set_start_method('spawn', force=True)
 
         force_fn = self.initialize_training()
-        # Initialize the tasks and observables.
-        for agent in self.agents.values():
-            agent.reset_agent()
+
 
         self.engine.seperate_rafts()
         progress = Progress(
@@ -197,7 +195,7 @@ class GlobalContinuousTrainer(Trainer):
                             logger.info(
                                 "Trying to seperate the rafts and save the agents."
                             )
-                            self.engine.seperate_rafts()
+                            # self.engine.seperate_rafts()
                             
                             with self.lock:
                                 for agent in self.agents.values():
@@ -208,7 +206,7 @@ class GlobalContinuousTrainer(Trainer):
                                     agent.save_agent(
                                         identifier=agent.task.__class__.__name__
                                     )
-                                    agent.reset_agent()
+                                    # agent.reset_agent()
             finally:
                 self.engine.finalize()
                 self.sampling_finished = True

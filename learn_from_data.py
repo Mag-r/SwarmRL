@@ -321,7 +321,7 @@ protocol = srl.agents.MPIActorCriticAgent(
     task=task,
     observable=obs,
     loss=loss,
-    max_samples_in_trajectory=20000,
+    max_samples_in_trajectory=2000,
 )
 # Initialize the simulation system
 
@@ -330,7 +330,8 @@ engine = OfflineLearning()
 
 
 protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_3")
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_9")
+protocol.set_optimizer(optimizer)
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(engine, 10000, 10)

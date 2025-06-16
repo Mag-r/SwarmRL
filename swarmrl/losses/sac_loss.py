@@ -169,6 +169,7 @@ class SoftActorCriticGradientLoss(Loss):
             "error_pred": per‐sample abs(critic_err) + abs(actor_err)
             }
         """
+        print(f"compiling combined loss at iteration {self.iteration_counter}")
         critic_params_frozen = jax.tree_map(lambda x: jax.lax.stop_gradient(x), critic_params)
         actor_params_frozen = jax.tree_map(lambda x: jax.lax.stop_gradient(x), actor_params)
 
@@ -211,7 +212,7 @@ class SoftActorCriticGradientLoss(Loss):
             actor_params, log_probs, minimum_entropy=minimum_entropy
         )
 
-        total_loss = 5*critic_loss + actor_loss + temperature_loss
+        total_loss = critic_loss + actor_loss + temperature_loss
 
         aux = {
             "critic_loss": critic_loss,
