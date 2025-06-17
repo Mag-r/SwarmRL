@@ -8,6 +8,7 @@ SwarmRL/docs/build
 espresso
 # *.pkl
 /position_tracking
+*.png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
