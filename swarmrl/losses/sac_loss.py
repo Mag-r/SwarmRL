@@ -272,6 +272,14 @@ class SoftActorCriticGradientLoss(Loss):
         actor_network.update_model(
             grad_actor
         )
+        # Calculate mean gradient for logging
+        mean_grad_critic = jax.tree_util.tree_reduce(
+            lambda x, y: x + jnp.mean(jnp.abs(y)), grad_critic, 0.0
+        )
+        mean_grad_actor = jax.tree_util.tree_reduce(
+            lambda x, y: x + jnp.mean(jnp.abs(y)), grad_actor, 0.0
+        )
+        print(f"Mean gradient (critic): {mean_grad_critic:.4f}, Mean gradient (actor): {mean_grad_actor:.4f}", flush=True)
 
         # 6) Return the sub‐losses and per‐sample error for logging
         return aux["actor_loss"], aux["critic_loss"], aux["temperature_loss"], aux["error_pred"]

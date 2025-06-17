@@ -45,7 +45,7 @@ class MappingTask(Task):
         self.image_queue = queue.Queue()
         self.image_saving_thread = threading.Thread(target=self._image_saving_worker, daemon=True)
         self.image_saving_thread.start()
-        self.iterations = 0
+        self.iterations = 210
         self.previous_certain_cells = 0
         self.previous_reward = 0.0
 

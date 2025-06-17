@@ -190,10 +190,7 @@ class ContinuousCriticModel(Network, ABC):
             raise NotImplementedError
         else:
             self.critic_state = self.critic_state.apply_gradients(grads=grads)
-            self.critic_state = self.critic_state.replace(
-            )
-            self.target_state = self.target_state.replace(
-            )
+ 
         # Logging for post-train model state
         logger.debug(f"{self.critic_state=}")
         logger.debug("Model updated")

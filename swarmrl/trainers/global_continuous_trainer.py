@@ -90,6 +90,7 @@ class GlobalContinuousTrainer(Trainer):
         n_episodes: int,
         episode_length: int,
         load_bar: bool = True,
+        episodic: bool = False,
     ):
         """
         Perform the RL training.
@@ -112,9 +113,7 @@ class GlobalContinuousTrainer(Trainer):
         # mp.set_start_method('spawn', force=True)
 
         force_fn = self.initialize_training()
-
-
-        self.engine.seperate_rafts()
+        # self.engine.seperate_rafts()
         progress = Progress(
             "Episode: {task.fields[Episode]}",
             BarColumn(),
@@ -206,7 +205,7 @@ class GlobalContinuousTrainer(Trainer):
                                     agent.save_agent(
                                         identifier=agent.task.__class__.__name__
                                     )
-                                    # agent.reset_agent()
+                                    agent.reset_agent() if episodic else None
             finally:
                 self.engine.finalize()
                 self.sampling_finished = True

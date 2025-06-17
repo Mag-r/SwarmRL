@@ -245,7 +245,7 @@ class OccupancyMapper(nn.Module):
 sequence_length = 1
 resolution = 253
 number_particles = 14
-learning_rate =5e-3
+learning_rate =8e-3
 
 obs = srl.observables.Observable(0)
 task = srl.tasks.MappingTask(OccupancyMapper(), model_path="Models/occupancy_mapper_6_2.pkl", resolution=(resolution, resolution))
@@ -311,7 +311,7 @@ loss = srl.losses.SoftActorCriticGradientLoss(
     polyak_averaging_tau=0.1,
     validation_split=0.1,
     fix_temperature=False,
-    batch_size=1024,
+    batch_size=102,
 )
 
 protocol = srl.agents.MPIActorCriticAgent(
@@ -330,7 +330,7 @@ engine = OfflineLearning()
 
 
 protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_9")
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_1")
 protocol.set_optimizer(optimizer)
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
