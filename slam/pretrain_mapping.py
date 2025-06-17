@@ -81,7 +81,6 @@ plt.savefig("arena_maps.png")
 input_map = np.zeros((1, n_cells, n_cells), dtype=np.float32)
 input_map_2 = np.zeros((1, n_cells, n_cells), dtype=np.float32)
 input_map_3 = np.zeros((1, n_cells, n_cells), dtype=np.float32)
-input_map_4 = np.zeros((1, n_cells, n_cells), dtype=np.float32)
 
 for i in range(1):
     positions = np.load("trajectory_files/traj_circles.pkl", allow_pickle=True)[
@@ -115,24 +114,7 @@ for i in range(1):
     )
     input_map_3 = np.concatenate((input_map_3, input), axis=0)
     
-    positions = np.load("trajectory_files/traj_final.pkl", allow_pickle=True)[
-        "features"
-    ].squeeze()
-    print(f"positions has shape{np.shape(positions)}")
-    input = np.array(
-        create_occupancy_map(positions, n_cells, range_pos, sampling_frequency=10)
-    )
-    input_map_4 = np.concatenate((input_map_4, input), axis=0)
     
-    positions = np.load("trajectory_files/traj_final_2.pkl", allow_pickle=True)[
-        "features"
-    ].squeeze()
-    print(f"positions has shape{np.shape(positions)}")
-    input = np.array(
-        create_occupancy_map(positions, n_cells, range_pos, sampling_frequency=10)
-    )
-    input_map_4 = np.concatenate((input_map_4, input), axis=0)
-
 print(
     f"circles input map shape: {input_map.shape}, \n race input map shape: {input_map_2.shape}, \n slit input map shape: {input_map_3.shape}"
 )
@@ -143,14 +125,13 @@ input_data_2 = input_map_2[..., None]  # Add batch and channel dimensions
 target_data_2 = output_grid_2[None, ..., None]  # Add batch and channel dimensions
 input_data_3 = input_map_3[..., None]  # Add batch and channel dimensions
 target_data_3 = output_grid_3[None, ..., None]  # Add batch and channel dimensions
-input_data_4 = input_map_4[..., None]  # Add batch and channel dimensions
-target_data_4 = output_grid_4[None, ..., None]  # Add batch and channel dimensions
+
 
 print(input_data.shape)
 print(target_data.shape)
-input_list = [input_data, input_data_2, input_data_3, input_data_4]
-target_list = [target_data, target_data_2, target_data_3, target_data_4]
-batch_size =56
+input_list = [input_data, input_data_2, input_data_3]
+target_list = [target_data, target_data_2, target_data_3]
+batch_size =48
 key = jax.random.PRNGKey(int(time.time()))
 
 print(np.array(target_list).shape)
@@ -161,7 +142,7 @@ def batch_generator(input_list, target_list, batch_size, key):
         batch_size % n_sets == 0
     ), "batch_size muss durch die Anzahl Arenen teilbar sein"
     samples_per_set = batch_size // n_sets
-    samples_per_set =[8,8,8,32]
+    samples_per_set =[16,16,16]
 
     while True:
         inputs = []
@@ -495,8 +476,8 @@ lr_schedule = optax.exponential_decay(
 )
 optimizer = optax.adam(learning_rate=lr_schedule)
 state = TrainState.create(apply_fn=model.apply, params=params["params"], tx=optimizer)
-params, opt_state= load_train_state("occupancy_model_checkpoint")  # Load the model if it exists
-state = state.replace(params=params, opt_state=opt_state)
+# params, opt_state= load_train_state("occupancy_model_checkpoint")  # Load the model if it exists
+# state = state.replace(params=params, opt_state=opt_state)
 
 losses = np.array([])
 losses_circles = np.array([])
@@ -523,9 +504,6 @@ for epoch in range(30001):  # Number of epochs
         plt.scatter(
             eval_points, losses_slit, label="Loss Slit", s=20, c="black", marker="x"
         )
-        plt.scatter(
-            eval_points, losses_final, label="Loss Final", s=20, c="blue", marker="x"
-        )
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
     plt.title("Training Loss")
@@ -536,45 +514,50 @@ for epoch in range(30001):  # Number of epochs
         _, loss_circles = train_step(state, input_data, target_data)
         _, loss_race = train_step(state, input_data_2, target_data_2)
         _, loss_slit = train_step(state, input_data_3, target_data_3)
-        _, loss_final = train_step(state, input_data_4, target_data_4)
+        # _, loss_final = train_step(state, input_data_4, target_data_4)
         losses_circles = np.append(losses_circles, loss_circles)
         losses_race = np.append(losses_race, loss_race)
         losses_slit = np.append(losses_slit, loss_slit)
-        losses_final = np.append(losses_final, loss_final)
+        # losses_final = np.append(losses_final, loss_final)
         logger.info(f"Step {epoch}, loss: {loss:.4f}")
-        occ = np.ones((1, n_cells, n_cells, 1), dtype=np.float32)
-        occ[:,32:,:,0]=0
-        occ[:, :32, 32:, 0] = 1000
-        prediction = state.apply_fn({"params": state.params}, occ)[0, ..., 0]
-        plt.figure(figsize=(6, 6))
-        plt.imshow(prediction, cmap="binary")
-        plt.title(f"Prediction at epoch {epoch}")
-        plt.savefig(f"prediction_{epoch}.png")
-        plt.close()
+
         fig, ax = plt.subplots(2, 3)
         ax[0, 0].imshow(input_data[3, ..., 0], cmap="binary")
-        ax[0, 0].set_title("Input Map")
+        ax[0, 0].set_xticks([])
+        ax[0, 0].set_yticks([])
+        ax[0, 1].set_xticks([])
+        ax[0, 1].set_yticks([])
+        ax[0, 2].set_xticks([])
+        ax[0, 2].set_yticks([])
+        ax[1, 0].set_xticks([])
+        ax[1, 0].set_yticks([])
+        ax[1, 1].set_xticks([])
+        ax[1, 1].set_yticks([])
+        ax[1, 2].set_xticks([])
+        ax[1, 2].set_yticks([])
+        ax[0, 0].set_title("Occupancy Map")
         prediction = state.apply_fn({"params": state.params}, input_data[3:4])[
             0, ..., 0
         ]
         ax[0, 1].imshow(prediction, cmap="binary")
-        ax[0, 1].set_title("prediction")
+        ax[0, 1].set_title("Prediction")
+    
         ax[0, 2].imshow((prediction > 0.8) != (target_data[0, ..., 0]), cmap="binary")
         ax[0, 2].set_title(
-            f"Difference {np.sum(np.array(target_data[0, ..., 0]!= (prediction > 0.8)))}"
+            "Error"
         )
 
-        ax[1, 0].imshow(input_data_4[-1, ..., 0], cmap="binary")
-        prediction = state.apply_fn({"params": state.params}, input_data_4[-2:-1])[
+        ax[1, 0].imshow(input_data_2[-1, ..., 0], cmap="binary")
+        prediction = state.apply_fn({"params": state.params}, input_data_2[-2:-1])[
             0, ..., 0
         ]
         ax[1, 1].imshow(prediction, cmap="binary")
-        ax[1, 2].imshow((prediction > 0.8) != (target_data_4[0, ..., 0]), cmap="binary")
-        ax[1, 2].set_title(
-            f"Difference {np.sum(np.array(target_data_4[0, ..., 0]!= (prediction > 0.8)))}"
-        )
+
+        ax[1, 2].imshow((prediction > 0.8) != (target_data_2[0, ..., 0]), cmap="binary")
 
         plt.savefig(f"map_{epoch}.png")
+        plt.tight_layout()
+        
         plt.close(fig)
         save_train_state(state, "occupancy_model_checkpoint")
         # save_encoder_state(state, "occupancy_model_checkpoint")
