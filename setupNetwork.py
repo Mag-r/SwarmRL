@@ -32,7 +32,7 @@ class ParticlePreprocessor(nn.Module):
         pos = state.reshape(b * t, n, d)
         x = nn.Dense(self.hidden_dim)(pos)
         pe = self.param("pos_encoding", nn.initializers.normal(0.02), (pos.shape[1], self.hidden_dim))
-        x = x + pe
+        x = x #+ pe
 
         x = self.attention_helper(x, train)
         x = jnp.mean(x, axis=1)
@@ -134,7 +134,7 @@ class ActorNet(nn.Module):
 
 
         mu = nn.Dense(action_dimension)(y)
-        log_std = nn.Dense(action_dimension)(y)
+        log_std = nn.Dense(action_dimension)(y) -1.8
         log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
 
         out = jnp.concatenate([mu, log_std], axis=-1)
@@ -231,7 +231,7 @@ def defineRLAgent(
         action_dimension=action_dimension, action_limits=action_limits
     )
     exploration_policy = srl.exploration_policies.GlobalOUExploration(
-        drift=0.12,
+        drift=0.08,
         volatility=0.08,
         action_dimension=action_dimension,
         action_limits=action_limits,
@@ -269,7 +269,7 @@ def defineRLAgent(
     loss = srl.losses.SoftActorCriticGradientLoss(
         value_function=value_function,
         minimum_entropy=-action_dimension*5,
-        polyak_averaging_tau=0.2,
+        polyak_averaging_tau=0.4,
         lock=lock,
         validation_split=0.01,
         fix_temperature=False,

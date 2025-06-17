@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GauravExperiment(Engine):
 
-    labview_port = 6342
+    labview_port = 6344
     labview_ip = "134.105.56.173"
     closing_message = "S_Goodbye".encode("utf-8")
     TDMS_file_name = "H_".encode("utf-8")  
@@ -40,7 +40,7 @@ class GauravExperiment(Engine):
         """Establish TCP connections with LabVIEW"""
         self.labview_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.labview_publisher = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        logger.info("Attepmting to establish connection with LabVIEW at %s:%d", self.labview_ip, self.labview_port)
+        logger.info("Attempting to establish connection with LabVIEW at %s:%d", self.labview_ip, self.labview_port)
         self.labview_listener.settimeout(100)
 
         self.labview_listener.connect((self.labview_ip, self.labview_port))
@@ -162,7 +162,7 @@ class GauravExperiment(Engine):
         for _ in range(n_slices):
             action = force_model.calc_action(None)
             action = MPIAction(
-                magnitude=[80, 80], frequency=[11, 6], keep_magnetic_field=1, gradient=action
+                magnitude=[30, 30], frequency=[11, 6], keep_magnetic_field=1, gradient=action
             )
             self.send_action(action)
             time.sleep(1)
