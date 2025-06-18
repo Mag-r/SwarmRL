@@ -107,7 +107,8 @@ def create_train_state(rng, model):
 
 _, validation_input_data, _, validation_ground_truth_images = load_and_split_data(scale, start_index=0, batch_size=100)
 example_image = validation_input_data[1]
-
+plot_image = example_image.copy()
+plot_image[:,:,0], plot_image[:,:,2] = plot_image[:,:,2], plot_image[:,:,0]  # Swap channels for visualization
 # Modify data loading to process 200 images at a time
 batch_size = 50
 
@@ -116,7 +117,7 @@ model = Autoencoder()
 state = create_train_state(rng, model)
 
 weight = np.ones_like(validation_ground_truth_images[0])
-weight = 100 # Adjust this weight based on imbalance
+weight = 10 # Adjust this weight based on imbalance
 
 def save_model(state, path):
     with open(path, "wb") as f:
@@ -127,7 +128,7 @@ def load_model(path):
         logger.info(f"Loading model from {path}")
         return pickle.load(f)
 
-loaded_params = load_model("autoencoder_model/model_20.pkl")
+loaded_params = load_model("autoencoder_model/autoencoder_hex.pkl")
 state = state.replace(params=loaded_params)
 training_losses = []
 validation_losses = []
@@ -163,9 +164,16 @@ try:
             if np.max(example_output) < 0.1:
                 raise ValueError("Model is not learning, output is too low.")
             fig, ax = plt.subplots(1, 3)
-            ax[0].imshow((example_image-np.min(example_image)) / (np.max(example_image)-np.min(example_image)))
+
+            ax[0].imshow((plot_image-np.min(plot_image)) / (np.max(plot_image)-np.min(plot_image)))
+            ax[0].set_title("Input Image")
             ax[1].imshow(validation_ground_truth_images[1, :, :, 0], cmap="hot")
+            ax[1].set_title("Ground Truth")
             ax[2].imshow(example_output[0, :, :, 0], cmap="hot")
+            ax[2].set_title("Reconstructed Image")
+            for axis in ax:
+                axis.set_xticks([])
+                axis.set_yticks([])
             plt.savefig(f"autoencoder_model/output_{epoch}.png")
             plt.close()
             save_model(state, f"autoencoder_model/model_{epoch}.pkl")

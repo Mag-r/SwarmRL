@@ -176,7 +176,7 @@ class BaslerCameraObservable(Observable, ABC):
             logger.warning(
                 f"Image queue is starting to fill. Current size {self.image_queue.qsize()}"
             )
-        image = cv2.resize(image, (506,506))
+        image = cv2.resize(image, (1012,1012))
         self.image_queue.put(image.copy())
         image = cv2.resize(image, (self.resolution[0], self.resolution[1]))
         # image[105:150, 70:180,:] = 0
@@ -245,11 +245,11 @@ class BaslerCameraObservable(Observable, ABC):
                 if image.shape[0] == 253:
                     image = cv2.resize(image, (506, 506))
                     plt.imsave(f"images/latest_camera_image.png", image)
-                elif image.shape[0] == 506:
+                else:
                     plt.imsave(
                         f"images/camera_image_{self.image_count:04d}.png",
                         image,
-                    ) if image.shape[0] == 506 else None
+                    ) 
                     self.image_count = self.image_count + 1
             else:
                 threading.Event().wait(0.1)

@@ -52,14 +52,6 @@ class ParticlePreprocessor(nn.Module):
         pos = state[:, :, :]
 
         x = nn.Dense(self.hidden_dim)(pos)
-
-        pe = self.param(
-            "pos_encoding",
-            nn.initializers.normal(0.02),
-            (pos.shape[1], self.hidden_dim),
-        )
-        x = x + pe
-
         x = AttentionBlock(self.hidden_dim, self.num_heads)(x, train)
         x = jnp.mean(x, axis=1)
 
@@ -92,7 +84,7 @@ class ActorNet(nn.Module):
                 jax.random.PRNGKey(0), x.shape[:1] + x.shape[2:]
             )
         mean = self.param("mean", nn.initializers.normal(stddev=0.3), (action_dimension,))
-        std = self.param("std", lambda key, shape: jnp.full(shape, -1.0), (action_dimension,))
+        std = self.param("std", lambda key, shape: jnp.full(shape, -1.0), (action_dimension,)) -1.5
         batch_size= x.shape[0]
         nn.BatchNorm(use_running_average=not train)(x)
         mean = jnp.tile(mean, (batch_size, 1))
@@ -172,7 +164,7 @@ def defineRLAgent(
         epsilon=0.0
     )
 
-    value_function = srl.value_functions.TDReturnsSAC(gamma=0.99, standardize=False)
+    value_function = srl.value_functions.TDReturnsSAC(gamma=0.1, standardize=False)
     actor_network = srl.networks.ContinuousActionModel(
         flax_model=actor,
         optimizer=optimizer,

@@ -70,13 +70,6 @@ class ParticlePreprocessor(nn.Module):
 
         x = nn.Dense(self.hidden_dim)(pos)
 
-        pe = self.param(
-            "pos_encoding",
-            nn.initializers.normal(0.02),
-            (pos.shape[1], self.hidden_dim),
-        )
-        x = x + pe
-
         x = AttentionBlock(self.hidden_dim, self.num_heads)(x, train)
         x = jnp.mean(x, axis=1)
 
@@ -148,7 +141,7 @@ class CriticNet(nn.Module):
 sequence_length = 1
 resolution = 253
 number_particles = 7
-learning_rate =5e-4
+learning_rate =1e-3
 
 obs = srl.observables.Observable(0)
 task = srl.tasks.ExperimentHexagonTask(number_particles=number_particles)
@@ -182,7 +175,7 @@ exploration_policy = srl.exploration_policies.GlobalOUExploration(
     action_dimension=action_dimension,
     epsilon=0.0
 )
-value_function = srl.value_functions.TDReturnsSAC(gamma=0.99, standardize=False)
+value_function = srl.value_functions.TDReturnsSAC(gamma=0.1, standardize=False)
 actor_network = srl.networks.ContinuousActionModel(
     flax_model=actor,
     optimizer=optimizer,
@@ -233,9 +226,9 @@ engine = OfflineLearning()
 
 
 protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_1_save")
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_1")
 # protocol.actor_network.set_temperature(1e-3)
-# protocol.set_optimizer(optimizer)
+protocol.set_optimizer(optimizer)
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(engine, 10000, 10)
