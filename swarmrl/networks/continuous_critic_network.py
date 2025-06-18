@@ -385,7 +385,7 @@ class ContinuousCriticModel(Network, ABC):
         Parameters
         ----------
         filename : str
-                Name of the model state file
+                Name of the model state file without .pkl
         directory : str
                 Path to the model state file.
 

@@ -168,7 +168,7 @@ class SoftActorCriticGradientLoss(Loss):
         """
         critic_params_frozen = jax.tree_map(lambda x: jax.lax.stop_gradient(x), critic_params)
         actor_params_frozen = jax.tree_map(lambda x: jax.lax.stop_gradient(x), actor_params)
-
+        print(f"compiling combied loss in iteration {self.iteration_counter}")
         desired_q, batch_stats_tgt = self._calculate_desired_q_value(
             critic_network=critic_network,
             actor_network_params=actor_params_frozen,

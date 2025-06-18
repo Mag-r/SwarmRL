@@ -148,7 +148,7 @@ class CriticNet(nn.Module):
 sequence_length = 1
 resolution = 253
 number_particles = 7
-learning_rate = 5e-4
+learning_rate =5e-4
 
 obs = srl.observables.Observable(0)
 task = srl.tasks.ExperimentHexagonTask(number_particles=number_particles)
@@ -215,7 +215,7 @@ loss = srl.losses.SoftActorCriticGradientLoss(
     polyak_averaging_tau=0.05,
     validation_split=0.1,
     fix_temperature=False,
-    batch_size=1024,
+    batch_size=5220,
 )
 
 protocol = srl.agents.MPIActorCriticAgent(
@@ -225,7 +225,7 @@ protocol = srl.agents.MPIActorCriticAgent(
     task=task,
     observable=obs,
     loss=loss,
-    max_samples_in_trajectory=20000,
+    max_samples_in_trajectory=200,
 )
 # Initialize the simulation system
 
@@ -233,7 +233,7 @@ engine = OfflineLearning()
 
 
 protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_52")
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_1_save")
 # protocol.actor_network.set_temperature(1e-3)
 # protocol.set_optimizer(optimizer)
 rl_trainer = Trainer([protocol])
