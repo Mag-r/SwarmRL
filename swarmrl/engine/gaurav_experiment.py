@@ -159,7 +159,7 @@ class GauravExperiment(Engine):
             force_model.set_training_mode(True)
             action = force_model.calc_action(None)
             action = MPIAction(
-                magnitude=action[:2], frequency=action[2:4], keep_magnetic_field=3, gradient=action[4:6]
+                magnitude=jnp.array([80,80]), frequency=jnp.array([11,6]), keep_magnetic_field=3, gradient=action
             )
             self.send_action(action)
             time.sleep(float(action.keep_magnetic_field) * 0.95)

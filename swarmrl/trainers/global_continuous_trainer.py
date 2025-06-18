@@ -197,7 +197,7 @@ class GlobalContinuousTrainer(Trainer):
                             logger.info(
                                 "Trying to seperate the rafts and save the agents."
                             )
-                            self.engine.seperate_rafts()
+                            # self.engine.seperate_rafts()
                             
                             with self.lock:
                                 for agent in self.agents.values():

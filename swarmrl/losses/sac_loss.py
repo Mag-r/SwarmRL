@@ -301,15 +301,7 @@ class SoftActorCriticGradientLoss(Loss):
         actor_loss = jnp.exp(log_temp) * log_probs - jnp.minimum(
             first_q_value, second_q_value
         )
-        l2_regularization = sum(
-            jnp.sum(jnp.square(param)) for param in jax.tree_util.tree_leaves(actor_network_params)
-        )
-        actor_loss += 1e-6 * l2_regularization
-        variance = logits[:,6:]
-        actor_loss += 3e-8 * jnp.mean(variance)
-        mean = logits[:, :6]
-        actor_loss += 8e-8 * jnp.mean(jnp.square(mean))
-        actor_loss *= 1/5
+
         assert jnp.shape(actor_loss) == jnp.shape(first_q_value)
         return jnp.mean(actor_loss), (log_probs, actor_loss, updated_batch_stats_actor)
 
@@ -352,11 +344,7 @@ class SoftActorCriticGradientLoss(Loss):
         critic_loss = 1/2*((first_q_value - desired_q_value) ** 2 + (
             second_q_value - desired_q_value
         ) ** 2)
-        l2_regularization = sum(
-            jnp.sum(jnp.square(param)) for param in jax.tree_util.tree_leaves(critic_network_params)
-        )
-        critic_loss += 1e-6 * l2_regularization
-        # critic_loss *= 0.3
+
         assert jnp.shape(critic_loss) == jnp.shape(desired_q_value)
         assert jnp.shape(critic_loss) == jnp.shape(first_q_value)
         logger.debug(f"{critic_loss=}")
@@ -475,6 +463,9 @@ class SoftActorCriticGradientLoss(Loss):
         """
         n_samples = data.shape[0]
         split_index = int(n_samples * (self.validation_split))
+        split_index = jnp.clip(
+            split_index, 2, 6
+        )
 
         return data[split_index:], data[:split_index]
 
