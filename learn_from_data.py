@@ -24,16 +24,20 @@ logging.basicConfig(
 )
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-action_dimension = 6
-action_limits = jnp.array(
-    [[0, 70], [0, 70], [0, 30], [0, 30], [-0.8, 0.8], [-0.5, 0.5]]
-)
+action_dimension = 2
+action_limits = jnp.array([[-0.2, 0.2], [-0.2, 0.2]])
 
-from typing import Any, Tuple
+
+
 
 import jax
 import jax.numpy as jnp
 from flax import linen as nn
+from typing import Tuple, Any
+import jax
+import jax.numpy as jnp
+from flax import linen as nn
+from typing import Any, Tuple
 
 
 class AttentionBlock(nn.Module):
@@ -71,16 +75,8 @@ class ParticlePreprocessor(nn.Module):
 
         x = nn.Dense(self.hidden_dim)(pos)
 
-        pe = self.param(
-            "pos_encoding",
-            nn.initializers.normal(0.02),
-            (pos.shape[1], self.hidden_dim),
-        )
-        x = x + pe
-
         x = AttentionBlock(self.hidden_dim, self.num_heads)(x, train)
         x = jnp.mean(x, axis=1)
-
         v = vel.reshape(b * t, -1)
         v = nn.Dense(4)(v)
         v = nn.silu(v)
@@ -124,16 +120,16 @@ class ActorNet(nn.Module):
         x = self.preprocessor(state, train=train)
         x = nn.LayerNorm()(x)
         x = nn.Dense(self.hidden_dim)(x)
-        x = nn.silu(x)
+        y = nn.silu(x)
         for i in range(4):
-            y = nn.LayerNorm()(x)
+            y = nn.LayerNorm()(y)
             y = nn.Dense(self.hidden_dim)(y)
             y = nn.silu(y)
 
-        mu = nn.Dense(action_dimension)(x)
+        mu = nn.Dense(action_dimension)(y)
         mu = jnp.tanh(mu) * 3.0
 
-        log_std = nn.Dense(action_dimension)(x)
+        log_std = nn.Dense(action_dimension)(y)-1.5
         log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
         o = nn.BatchNorm(use_running_average=not train)(mu)
         return jnp.concatenate([mu, log_std], axis=-1), carry
@@ -164,25 +160,23 @@ class CriticNet(nn.Module):
         sa = nn.silu(sa)
 
         def q_net(name: str):
-            y = sa
+            z = sa
             for i in range(4):
-                z = nn.LayerNorm()(y)
+                z = nn.LayerNorm()(z)
                 z = nn.Dense(self.hidden_dim, name=f"{name}_fc{i}")(z)
                 z = nn.silu(z)
                 z = nn.Dropout(self.dropout_rate)(z, deterministic=not train)
-            q = nn.Dense(1, name=f"{name}_out")(y)
+            q = nn.Dense(1, name=f"{name}_out")(z)
             return q
 
         q1 = q_net("q1")
         q2 = q_net("q2")
         y = nn.BatchNorm(use_running_average=not train)(sa)
         return q1, q2
-
-
 sequence_length = 1
 resolution = 253
 number_particles = 30
-learning_rate = 3e-6
+learning_rate = 3e-2
 
 obs = srl.observables.Observable(0)
 task = srl.tasks.BallRacingTask()
@@ -194,15 +188,14 @@ lr_schedule = optax.exponential_decay(
     decay_rate=0.99,
     staircase=True,
 )
-optimizer = optax.inject_hyperparams(optax.adam)(learning_rate=lr_schedule)
+optimizer = optax.chain(
+    optax.clip_by_global_norm(1.0),
+    optax.adam(lr_schedule),
+)
 
 shared_encoder = ParticlePreprocessor()
 actor = ActorNet(preprocessor=shared_encoder)
 critic = CriticNet(preprocessor=shared_encoder)
-
-action_limits = jnp.array(
-    [[0, 70], [0, 70], [0, 50], [0, 50], [-0.8, 0.8], [-0.5, 0.5]]
-)
 
 
 # Define a sampling_strategy
@@ -266,10 +259,10 @@ protocol = srl.agents.MPIActorCriticAgent(
 engine = OfflineLearning()
 
 
-protocol.restore_agent(identifier=task.__class__.__name__)
-protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_1")
-protocol.actor_network.set_temperature(1e-3)
-
+# protocol.restore_agent(identifier=task.__class__.__name__)
+protocol.restore_trajectory(identifier=f"{task.__class__.__name__}_episode_15")
+# protocol.actor_network.set_temperature(1e-3)
+protocol.set_optimizer(optimizer)
 rl_trainer = Trainer([protocol])
 print("start training", flush=True)
 reward = rl_trainer.perform_rl_training(engine, 10000, 10)

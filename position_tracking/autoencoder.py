@@ -108,6 +108,8 @@ def create_train_state(rng, model):
 
 _, validation_input_data, _, validation_ground_truth_images = load_and_split_data(scale, start_index=0, batch_size=100)
 example_image = validation_input_data[0]
+plotting_image = (example_image - np.min(example_image)) / (np.max(example_image) - np.min(example_image))
+plotting_image = plotting_image[:, :, [2,1,0]]  # Convert BGR to RGB for plotting
 
 # Modify data loading to process 200 images at a time
 batch_size = 50
@@ -128,7 +130,7 @@ def load_model(path):
         logger.info(f"Loading model from {path}")
         return pickle.load(f)
 
-loaded_params = load_model("autoencoder_model/model_260.pkl")
+loaded_params = load_model("autoencoder_model/model_60.pkl")
 state = state.replace(params=loaded_params)
 training_losses = []
 validation_losses = []
@@ -163,7 +165,7 @@ try:
             example_output = state.apply_fn(state.params, example_image[None, ...])
             print(np.max(example_output))
             fig, ax = plt.subplots(1, 3)
-            ax[0].imshow((example_image-np.min(example_image)) / (np.max(example_image)-np.min(example_image)))
+            ax[0].imshow(plotting_image)
             ax[1].imshow(validation_ground_truth_images[0, :, :, 0], cmap="hot")
             ax[2].imshow(example_output[0, :, :, 0], cmap="hot")
             plt.savefig(f"autoencoder_model/output_{epoch}.png")

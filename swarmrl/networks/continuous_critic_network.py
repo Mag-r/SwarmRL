@@ -392,13 +392,13 @@ class ContinuousCriticModel(Network, ABC):
 
         self.critic_state = self.critic_state.replace(
             params=model_params_critics,
-            # opt_state=opt_state_critic,
+            opt_state=opt_state_critic,
             # step=opt_step_critic,
             batch_stats=batch_stats_critic,
         )
         self.target_state = self.target_state.replace(
             params=model_params_target,
-            # opt_state=opt_state_target,
+            opt_state=opt_state_target,
             # step=opt_step_target,
             batch_stats=batch_stats_target,
         )
@@ -406,6 +406,23 @@ class ContinuousCriticModel(Network, ABC):
         self.epoch_count = epoch
 
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
+        
+    def set_optimizer(self, optimizer: GradientTransformation):
+        """
+        Set the optimizer for the model.
+
+        Parameters
+        ----------
+        optimizer : GradientTransformation
+            The optimizer to set for the model.
+        """
+        if isinstance(self.optimizer, dict):
+            raise NotImplementedError
+        else:
+            self.critic_state = self.critic_state.replace(tx=optimizer)
+            self.target_state = self.target_state.replace(tx=optimizer)
+            self.optimizer = optimizer
+            logger.info("Optimizer successfully set.")
         
     def load_particle_preprocessor_params(self, filename: str, directory: str = "Models"):
         """

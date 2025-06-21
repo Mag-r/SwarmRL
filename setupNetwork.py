@@ -9,7 +9,7 @@ import os
 
 logger = logging.getLogger(__name__)
 action_dimension = 2
-action_limits = jnp.array([[-1, 1], [-0.7, 0.7]])
+action_limits = jnp.array([[-0.2, 0.2], [-0.2, 0.2]])
 
 
 
@@ -61,9 +61,7 @@ class ParticlePreprocessor(nn.Module):
 
         x = AttentionBlock(self.hidden_dim, self.num_heads)(x, train)
         x = jnp.mean(x, axis=1)
-        print(b, t, n, d, x.shape, vel.shape, flush=True)
         v = vel.reshape(b * t, -1)
-        print(f"vel shape: {v.shape}")
         v = nn.Dense(4)(v)
         v = nn.silu(v)
 
@@ -192,7 +190,7 @@ def defineRLAgent(
         drift=0.1, volatility=0.08, action_dimension=action_dimension, action_limits=action_limits
     )
 
-    value_function = srl.value_functions.TDReturnsSAC(gamma=0.99, standardize=False)
+    value_function = srl.value_functions.TDReturnsSAC(gamma=0.95, standardize=False)
     actor_network = srl.networks.ContinuousActionModel(
         flax_model=actor,
         optimizer=optimizer,
@@ -241,4 +239,4 @@ def defineRLAgent(
         max_samples_in_trajectory=1000,
         lock=lock
     )
-    return protocol
+    return protocol, optimizer

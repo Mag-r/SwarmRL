@@ -391,8 +391,8 @@ class ContinuousActionModel(Network, ABC):
 
         self.model_state = self.model_state.replace(
             params=model_params,
-            # opt_state=opt_state,
-            step=opt_step,
+            opt_state=opt_state,
+            # step=opt_step,
             batch_stats=batch_stats,
         )
         logger.info(self.model_state.params.keys())
@@ -400,6 +400,21 @@ class ContinuousActionModel(Network, ABC):
         self.epoch_count = epoch
         # self.carry = carry
         logger.info(f"Model state restored from {directory}/{filename}.pkl")
+        
+    def set_optimizer(self, optimizer: GradientTransformation):
+        """
+        Set the optimizer for the model.
+
+        Parameters
+        ----------
+        optimizer : GradientTransformation
+            The optimizer to set for the model.
+        """
+        if isinstance(self.optimizer, dict):
+            raise NotImplementedError("Custom optimizers are not supported yet.")
+        else:
+            self.model_state = self.model_state.replace(tx=optimizer)
+            logger.info("Optimizer updated successfully.")
 
     def load_particle_preprocessor_params(self, filename: str, directory: str = "Models"):
         """

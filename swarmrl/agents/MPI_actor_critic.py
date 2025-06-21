@@ -153,6 +153,18 @@ class MPIActorCriticAgent(Agent):
         """
         self.task.kill_switch = False  # Reset here.
         self.trajectory = GlobalTrajectoryInformation()
+        
+    def set_optimizer(self, optimizer):
+        """
+        Set the optimizer for the actor and critic networks.
+
+        Parameters
+        ----------
+        optimizer : Optimizer
+                Optimizer to use for the actor and critic networks.
+        """
+        self.actor_network.set_optimizer(optimizer)
+        self.critic_network.set_optimizer(optimizer)
 
     def save_trajectory(
         self, directory: str = "training_data", identifier: str = "trajectory"
