@@ -7,40 +7,33 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from flax import linen as nn
+from flax.training.train_state import TrainState
 from matplotlib import pyplot as plt
 from tqdm import tqdm
-from flax.training.train_state import TrainState
 
-arena = np.load("slit_arena.npy").astype(np.float32)
+arena = np.load("race_track.npy").astype(np.float32)
 arena = (arena - np.min(arena)) / (np.max(arena) - np.min(arena))
 arena = cv2.resize(arena, (64, 64))
-
-arena = nn.max_pool(arena[np.newaxis,...,np.newaxis], window_shape=(3, 2), padding="SAME")[0, :, :, 0]
+reference_solution = arena.copy()
+arena = nn.max_pool(
+    arena[np.newaxis, ..., np.newaxis], window_shape=(2, 2), padding="SAME"
+)[0, :, :, 0]
 arena = arena.astype(np.float32)
-arena.at[:,31:34].set(0)
-iterations = 10
+
 num_agents = 14  # Number of agents
 occupancy_map = np.zeros((64, 64), dtype=np.float32)
-agents = np.random.rand(num_agents, 2) * 10 + 10  # 14 agents in a 64x64 arena
 plt.imshow(arena, cmap="gray")
 plt.savefig("arena.png")
-def integrate():
+
+
+def integrate(iterations=1, num_agents=num_agents):
     for _ in range(iterations):
-        x = agents[:, 0].astype(int)
-        y = agents[:, 1].astype(int)
-        occupancy_map[x, y] += 1
-
-        dx = np.random.randint(-1, 2, size=(num_agents,))
-        dy = np.random.randint(-1, 2, size=(num_agents,))
-
-        # Compute proposed new positions
-        new_x = np.clip(x + dx, 0, 63)
-        new_y = np.clip(y + dy, 0, 63)
-
-        # Only move if not blocked by arena
-        can_move = arena[new_x, new_y] != 1
-        agents[:, 0] = np.where(can_move, new_x, agents[:, 0])
-        agents[:, 1] = np.where(can_move, new_y, agents[:, 1])
+        x = np.random.randint(0, 64, num_agents)
+        y = np.random.randint(0, 64, num_agents)
+        valid_positions = arena[x, y] < 0.5  # Check if the position is valid
+        x = x[valid_positions]
+        y = y[valid_positions]
+        occupancy_map[x, y] += 1  # Increment the occupancy map at the agent
 
 
 def edge_pad(x, kernel_size):
@@ -99,16 +92,58 @@ lr_schedule = optax.exponential_decay(
 )
 optimizer = optax.adam(learning_rate=lr_schedule)
 state = TrainState.create(apply_fn=model.apply, params=params["params"], tx=optimizer)
-params, opt_state= load_train_state("occupancy_model_checkpoint")  # Load the model if it exists
+params, opt_state = load_train_state(
+    "occupancy_model_checkpoint"
+)  # Load the model if it exists
 state = state.replace(params=params, opt_state=opt_state)
 
 
-predictions = []
-for i in tqdm(range(1000)):
-    integrate()  # Update the occupancy map based on agent movements
-    prediction = state.apply_fn(
-        {"params": state.params}, jnp.reshape(occupancy_map, (1, 64, 64, 1))
-    )
-    predictions.append(prediction[0, :, :, 0])
-    plt.imshow(prediction[0, :, :, 0], cmap="gray")
-    plt.savefig(f"predictions/prediction_{i:03d}.png")
+def conv(reference_solution, occupancy_map, integrate, state, num_agents=num_agents):
+    predictions = []
+    losses = []
+    uncertains = []
+    for i in tqdm(range(10000)):
+        integrate(iterations=10, num_agents=num_agents)  # Update the occupancy map based on agent movements
+        prediction = state.apply_fn(
+            {"params": state.params}, jnp.reshape(occupancy_map, (1, 64, 64, 1))
+        )
+        predictions.append(prediction[0, :, :, 0])
+        uncertain = (prediction[0, :, :, 0] < 0.99) & (prediction[0, :, :, 0] > 0.01)
+
+        error = 0.5 * jnp.mean(
+            jnp.abs(
+                (prediction[0, :, :, 0] > 0.99)
+                - reference_solution
+                - uncertain.sum() / (64 * 64)
+            )
+        )  # Calculate the error between prediction and reference solution
+        uncertains.append(uncertain.sum() / (64 * 64))
+        losses.append(error)
+        fig, ax = plt.subplots(1, 3, figsize=(24, 6))
+        ax[0].imshow(prediction[0, :, :, 0], cmap="gray")
+        ax[0].set_title("Predicted Arena")
+        ax[1].loglog(range(len(losses)), losses, label="BCE Loss")
+        ax[1].set_title("Relative Number of wrong classifications")
+        ax[1].set_xlabel("Iteration * 10")
+        ax[1].set_ylabel("Error")
+
+        ax[2].loglog(range(len(uncertains)), uncertains)
+        ax[2].set_title("Uncertain cells [%]")
+        ax[2].set_xlabel("Iteration * 10")
+        ax[2].set_ylabel("Uncertainty")
+        plt.savefig(f"predictions/prediction_{i:03d}_{num_agents}.png")
+        plt.close()
+        if error < 0.08:
+            print(f"Convergence reached at iteration {i}")
+            return i
+
+conv_reached=[]
+for k in range(1, 30):
+    num_agents = k
+    for l in range(10):
+        print(f"Starting convergence for {num_agents} agents")
+        occupancy_map = np.zeros((64, 64), dtype=np.float32)
+        iter = conv(reference_solution, occupancy_map, integrate, state, num_agents)
+        conv_reached.append(k)
+        conv_reached.append(iter)
+np.save("convergence_results.npy", np.array(conv_reached))
