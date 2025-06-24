@@ -36,9 +36,9 @@ class AttentionBlock(nn.Module):
             deterministic=not train,
         )(
             y
-        )  # Residual
+        )
 
-        return y  # Residual
+        return y
 
 class ParticlePreprocessor(nn.Module):
     hidden_dim: int = 12

@@ -28,7 +28,7 @@ critic_network = srl.networks.ContinuousCriticModel(
 )
 critic_network.restore_model_state(directory="Models", filename="ActorCriticAgent_0_critic_ExperimentHexagonTask")
 
-filename = "training_data/trajectory_ExperimentHexagonTask_episode_1.pkl"
+filename = "training_data/trajectory_ExperimentHexagonTask_episode_1_save.pkl"
 with open(filename, "rb") as f:
     trajectory_data = pickle.load(f)
 
@@ -49,12 +49,21 @@ print("Q-values shape:", q_values.shape)
 
 pysr_input = jnp.concatenate([state.reshape(state.shape[0], -1), actions], axis=-1)
 pysr_model = pysr.PySRRegressor(
-    model_selection="best",
-    niterations=10,
+    model_selection="best",             # Beste Gleichung bzgl. Loss
+    niterations=1000,                   # Deutlich mehr Iterationen
+    populations=40,                     # Mehr Vielfalt in der Suche
+    population_size=1000,              # Größere Population
     binary_operators=["+", "-", "*", "/"],
     unary_operators=["exp", "log", "sin", "cos"],
-    maxsize=1000,
-    maxdepth=5,
+    maxsize=50,                         # Kleinere maxsize für besseres Overfitting-Verhältnis
+    maxdepth=10,                        # Höhere Tiefe erlaubt komplexere Strukturen
+    loss="loss(x, y) = (x - y)^2",      # MSE als Loss
+    verbosity=1,                        # Fortschritt anzeigen
+    turbo=True,                         # Schnellerer Modus
+    procs=8,                            # Parallelisierung (je nach System anpassen)
+    timeout_in_seconds=60 * 60,         # Laufzeitbegrenzung z.B. 1 Stunde
+    temp_equation_file=True             # Zwischenspeichern der besten Modelle
 )
+
 pysr_model.fit(pysr_input, q_values)
 print("Pysr model:", pysr_model)
